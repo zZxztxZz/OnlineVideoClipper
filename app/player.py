@@ -80,7 +80,7 @@ class PlayerCache:
                 if not prefetch:self.error='已保留的选区占满缓冲，请下载或清空片段后重试。'
                 return self.status()
             self.pending=dict(url=session[0],quality=quality,duration=duration,center=position,
-                              begin=begin,finish=end,mode='manual',prefetch=prefetch,serial=self.serial,session=session,budget=budget)
+                              begin=begin,finish=end,mode='manual',preview=data.get('frames_only') is not True,prefetch=prefetch,serial=self.serial,session=session,budget=budget)
             self.pins();self.wake.set()
             return self.status()
 
@@ -94,10 +94,11 @@ class PlayerCache:
             try:
                 if time.time()-path.stat().st_mtime>86400:continue
                 record=self.scenes.record(path.parent.name)
-                if record.get('preview_version')!=1:continue
+                if record.get('preview_version') not in (1,2):continue
                 if (record['url'],record['quality'],record['duration'])!=session:continue
                 if record['last_end']-record['times'][0]>self.MAX_SECONDS:continue
-                if not (path.parent/'preview.mp4').is_file() or not (path.parent/'source.mkv').is_file():continue
+                if not (path.parent/'source.mkv').is_file():continue
+                if record['preview_version']==1 and not (path.parent/'preview.mp4').is_file():continue
                 self.entries[path.parent.name]=dict(record=record,used=path.stat().st_mtime-time.time()+time.monotonic())
             except (ValueError,OSError,KeyError):continue
         self.pins()
@@ -165,7 +166,7 @@ class PlayerCache:
                 if task.get('cancelled') or self.stopped.is_set():continue
                 with self.lock:
                     if task.get('cancelled'):continue
-                    result=self.scenes.start(**{k:v for k,v in task.items() if k in ('url','quality','duration','center','begin','finish','mode')})
+                    result=self.scenes.start(**{k:v for k,v in task.items() if k in ('url','quality','duration','center','begin','finish','mode','preview')})
                     task['id']=result['id']
                 while not self.stopped.wait(.1):
                     state=self.scenes.status(task['id'])

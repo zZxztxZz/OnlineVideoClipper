@@ -15,6 +15,7 @@ class LocalServer(ThreadingHTTPServer):
         super().__init__(('127.0.0.1', 0), Handler)
         self.origin = f'http://127.0.0.1:{self.server_port}'
         self.url = f'{self.origin}/s/{self.token}/'
+        self.engine.preview_origin=self.url
 
 class Handler(BaseHTTPRequestHandler):
     def setup(self):
@@ -157,31 +158,43 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404,dict(error=str(e)))
 
     def serve_preview(self,key):
-        import re
-        import urllib.error
-        from preview import open_media
+        import re,time,urllib.error
         started=False
         try:
-            if not re.fullmatch(r'[0-9a-f]{32}',key): raise ValueError('预览无效')
-            range_header=self.headers.get('Range')
-            if range_header and not re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)',range_header): raise ValueError('Range 无效')
-            entry=self.server.engine.preview_source(key)
-            with open_media(entry,range_header,self.server.engine.tools) as upstream:
-                self.send_response(upstream.status)
-                self.send_header('Content-Type','audio/mp4' if entry['format'].get('vcodec')=='none' else 'video/mp4')
-                for header in ('Content-Length','Content-Range','Accept-Ranges'):
-                    if upstream.headers.get(header): self.send_header(header,upstream.headers[header])
-                self.send_header('Cache-Control','private, no-store')
-                self.end_headers()
-                started=True
-                while True:
-                    block=upstream.read(64*1024)
-                    if not block: break
-                    self.wfile.write(block)
-        except (ConnectionResetError,BrokenPipeError,TimeoutError):
-            pass
+            if not re.fullmatch(r'[0-9a-f]{32}',key):raise ValueError('预览无效')
+            entry=self.server.engine.preview_source(key);cache=self.server.engine.byte_cache
+            size=cache.describe(entry);header=self.headers.get('Range');begin=0;end=size-1
+            if header:
+                match=re.fullmatch(r'bytes=(\d*)-(\d*)',header)
+                if not match or not any(match.groups()):raise ValueError('Range 无效')
+                if not match[1]:begin=max(0,size-int(match[2]))
+                else:begin=int(match[1]);end=min(end,int(match[2])) if match[2] else end
+                if not 0<=begin<=end<size:
+                    self.send_response(416);self.send_header('Content-Range',f'bytes */{size}');self.send_header('Content-Length','0');self.end_headers();return
+            self.send_response(206 if header else 200)
+            self.send_header('Content-Type','audio/mp4' if entry['format'].get('vcodec')=='none' else 'video/mp4')
+            self.send_header('Accept-Ranges','bytes');self.send_header('Content-Length',str(end-begin+1))
+            if header:self.send_header('Content-Range',f'bytes {begin}-{end}/{size}')
+            self.send_header('Cache-Control','private, no-store');self.end_headers();started=True
+            position=begin;first=True
+            browser='Chrome/' in self.headers.get('User-Agent','') and urlparse(self.path).query!='reader=1'
+            while position<=end and not self.server.engine.stopping.is_set():
+                if browser and not first:
+                    while entry.get('flow') is False and time.monotonic()-entry.get('flow_time',0)<5:
+                        if self.server.engine.stopping.wait(.1):return
+                index=position//cache.BLOCK;offset=position%cache.BLOCK
+                chunks=cache.iter_block(entry,index)
+                try:
+                    for raw in chunks:
+                        if offset>=len(raw):offset-=len(raw);continue
+                        part=raw[offset:offset+end-position+1];offset=0
+                        if part:self.wfile.write(part);position+=len(part)
+                        if position>end:break
+                finally:chunks.close()
+                first=False
+        except (ConnectionResetError,BrokenPipeError,TimeoutError):pass
         except (ValueError,OSError,urllib.error.URLError):
-            if not started: self.reply(502,dict(error='预览暂不可用，请检查该平台 Cookie 或重新解析'))
+            if not started:self.reply(502,dict(error='预览暂不可用，请检查网络、Cookie 或重新解析'))
 
     def do_POST(self):
         if not self.authorized():
@@ -198,7 +211,15 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith('/api/player/'):
                 if e.updating: raise ValueError('正在更新，请稍后加载素材。')
                 op=path.rsplit('/',1)[-1]
-                if op=='request': result=e.player_cache.request(data)
+                if op=='stream': result=e.stream_preview(data.get('url'),data.get('quality'))
+                elif op=='flow':
+                    import time
+                    items=data.get('items',[])
+                    if not isinstance(items,list) or len(items)>2:raise ValueError('缓冲状态无效')
+                    for item in items:
+                        entry=e.preview_source(item.get('id'));entry['flow']=item.get('allow') is True;entry['flow_time']=time.monotonic()
+                    result=dict(ok=True)
+                elif op=='request': result=e.player_cache.request(data)
                 elif op=='status': result=e.player_cache.status()
                 elif op=='selection': result=e.player_cache.selection(data)
                 else: raise ValueError('接口不存在')
@@ -206,13 +227,13 @@ class Handler(BaseHTTPRequestHandler):
                 op=path.rsplit('/',1)[-1]
                 if op=='start':
                     if e.updating: raise ValueError('正在更新，请稍后识别镜头。')
+                    if data.get('mode')!='manual':raise ValueError('自动识别镜头功能已移除，请使用手动逐帧选点。')
                     result=e.scenes.start(data.get('url'),data.get('center'),data.get('quality'),data.get('duration'),data.get('radius',12),
                                           data.get('mode','scene'),data.get('begin'),data.get('finish'))
                 elif op=='status': result=e.scenes.status(data.get('id'))
                 elif op=='cancel': result=e.scenes.cancel(data.get('id'))
                 elif op=='frames': result=e.scenes.pictures(data.get('id'),data.get('start_index'),data.get('end_index'))
                 elif op=='frame': result=e.scenes.frame(data.get('id'),data.get('index'))
-                elif op=='snap': result=e.scenes.snap(data.get('id'),data.get('index'),data.get('side'))
                 elif op=='snapshot': result=e.scenes.snapshot(data.get('id'),data.get('index'),data.get('path'))
                 else: raise ValueError('接口不存在')
             elif path in ('/api/connect/start', '/api/connect/finish', '/api/choose-cookie','/api/choose-save-file'):

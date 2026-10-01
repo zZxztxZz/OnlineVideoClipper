@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 import os
 
-DOMAINS=('bilivideo.com','bilivideo.cn','bilivideo.net','douyinvod.com','bytecdn.cn','byteimg.com','amemv.com','douyin.com','iesdouyin.com','pstatp.com')
+DOMAINS=('googlevideo.com','bilivideo.com','bilivideo.cn','bilivideo.net','douyinvod.com','bytecdn.cn','byteimg.com','amemv.com','douyin.com','iesdouyin.com','pstatp.com')
 
 def media_url(url):
     p=urllib.parse.urlparse(url)
@@ -40,3 +40,70 @@ def open_media(entry,range_header,tools):
     if range_header: headers['Range']=range_header
     headers['Accept-Encoding']='identity'
     return urllib.request.build_opener(*handlers).open(urllib.request.Request(url,headers=headers),timeout=20)
+
+
+class ByteCache:
+    BLOCK=1024*1024
+    LIMIT=512*1024**2
+
+    def __init__(self,engine):
+        import threading
+        self.engine=engine
+        self.root=engine.data/'stream-cache';self.root.mkdir(exist_ok=True)
+        self.lock=threading.RLock();self.locks={};self.sizes={}
+        self.prune()
+
+    def identity(self,entry):
+        import hashlib,json
+        s=entry['settings']
+        return hashlib.sha256(json.dumps(self.engine.cache_key(entry['format']['url'],s)).encode()).hexdigest()
+
+    def describe(self,entry):
+        import re
+        key=self.identity(entry)
+        with self.lock:
+            if key in self.sizes:return self.sizes[key]
+        with open_media(entry,'bytes=0-0',self.engine.tools) as upstream:
+            match=re.fullmatch(r'bytes 0-0/(\d+)',upstream.headers.get('Content-Range',''))
+            if upstream.status!=206 or not match:raise ValueError('当前源不支持按需读取，请重新解析。')
+            size=int(match[1])
+            if size<1:raise ValueError('媒体文件大小无效')
+        with self.lock:self.sizes[key]=size
+        return size
+
+    def block(self,entry,index):
+        return b''.join(self.iter_block(entry,index))
+
+    def iter_block(self,entry,index):
+        import threading
+        key=self.identity(entry);name=f'{key}-{index}.bin';path=self.root/name
+        with self.lock:guard=self.locks.setdefault(name,threading.Lock())
+        with guard:
+            if path.is_file():
+                os.utime(path,None);yield path.read_bytes();return
+            size=self.describe(entry);start=index*self.BLOCK;end=min(size-1,start+self.BLOCK-1)
+            with open_media(entry,f'bytes={start}-{end}',self.engine.tools) as upstream:
+                if upstream.status!=206 or upstream.headers.get('Content-Range')!=f'bytes {start}-{end}/{size}':
+                    raise ValueError('媒体服务器返回了无效的读取范围')
+                temporary=path.with_suffix('.tmp');remaining=end-start+1
+                try:
+                    with temporary.open('wb') as output:
+                        while remaining:
+                            raw=upstream.read(min(64*1024,remaining))
+                            if not raw:raise ValueError('媒体数据不完整，请重试。')
+                            output.write(raw);remaining-=len(raw)
+                            if not remaining:
+                                output.close();os.replace(temporary,path);self.prune(protect=path)
+                            yield raw
+                finally:temporary.unlink(missing_ok=True)
+
+    def prune(self,protect=None):
+        import time
+        with self.lock:
+            files=sorted((p.stat().st_mtime,p.stat().st_size,p) for p in self.root.glob('*.bin'))
+            total=sum(n for _,n,_ in files)
+            for stamp,size,path in files:
+                if path==protect:continue
+                if self.locks.get(path.name) and self.locks[path.name].locked():continue
+                if time.time()-stamp>86400 or total>self.LIMIT:
+                    path.unlink(missing_ok=True);total-=size

@@ -46,7 +46,7 @@ class SceneManager:
                 shutil.rmtree(p,ignore_errors=True)
                 total-=size
 
-    def start(self, url, center, quality, duration, radius=12, mode='scene', begin=None, finish=None):
+    def start(self, url, center, quality, duration, radius=12, mode='scene', begin=None, finish=None, preview=True):
         if self.stopped.is_set(): raise ValueError('程序正在退出')
         source=parse_source(url)
         if source['short']: raise ValueError('请先解析视频，再识别镜头。')
@@ -66,7 +66,7 @@ class SceneManager:
         key=uuid.uuid4().hex
         task=dict(id=key,url=source['url'],center=center,quality=str(quality),duration=duration,radius=radius,
                   state='working',message='正在准备逐帧预览…' if mode=='manual' else '正在读取附近视频…',
-                  mode=mode,begin=begin,finish=finish,cancel=threading.Event(),process=None)
+                  mode=mode,begin=begin,finish=finish,preview=preview,cancel=threading.Event(),process=None)
         with self.lock: self.tasks[key]=task
         task['thread']=threading.Thread(target=self.work,args=(task,),daemon=True)
         task['thread'].start()
@@ -90,6 +90,7 @@ class SceneManager:
             if timed_out.is_set(): raise ValueError('镜头分析超时，可缩小范围后重试。')
             if p.returncode:
                 from core import classify_error
+                task['detail']=self.engine.redact(output)
                 _,message=classify_error(output)
                 raise ValueError(message)
             return output
@@ -108,11 +109,14 @@ class SceneManager:
             '--paths',str(directory),'--output','source.%(ext)s','--force-overwrites','--print','after_move:FILE:%(filepath)s',
             '--downloader-args','ffmpeg_o:-copyts -start_at_zero -avoid_negative_ts disabled -f matroska',
             '--socket-timeout','20','--retries','1','--fragment-retries','1']
+        cached=self.engine.cached_download_info(task['url'],s,max_age=7200 if self.engine.preview_origin else 300)
+        if cached: cached=self.engine.cached_preview_info(cached,task['quality'])
+        local=bool(cached and self.engine.preview_origin and all(f.get('url','').startswith(self.engine.preview_origin) for f in cached.get('formats',[])))
         ca=Path(os.environ.get('SSL_CERT_FILE') or self.engine.tools/'yt-dlp'/'_internal'/'certifi'/'cacert.pem')
-        if ca.is_file():
+        if ca.is_file() and not local:
             import shlex
             cmd+=['--downloader-args','ffmpeg_i:-tls_verify 1 -ca_file '+shlex.quote(ca.as_posix())+' -rw_timeout 20000000']
-        cached=self.engine.cached_download_info(task['url'],s)
+        if local:cmd+=['--downloader-args','ffmpeg_i:-rw_timeout 20000000']
         if cached:
             info=directory/'source-info.json'
             info.write_text(json.dumps(cached,ensure_ascii=False),encoding='utf-8')
@@ -120,7 +124,7 @@ class SceneManager:
         return cmd+['--',task['url']]
 
     def analyze(self, task, media, start, end):
-        task['message']='正在寻找切镜点并读取真实帧时间…'
+        task['message']='正在读取真实帧时间…' if task.get('mode')=='manual' else '正在分析帧时间…'
         probe=json.loads(self.run([str(self.engine.tools/'ffprobe.exe'),'-v','error','-select_streams','v:0','-show_frames',
             '-show_entries','frame=best_effort_timestamp_time,duration_time,pkt_duration_time:stream=width,height,avg_frame_rate',
             '-of','json',str(media)],task))
@@ -176,9 +180,9 @@ class SceneManager:
                 record=self.analyze(task,target,start,end)
                 selected=record['shots'][record['selected_shot']]
                 if manual or selected['left_found'] and selected['right_found'] or start==0 and end==task['duration']: break
-            task['message']='正在准备镜头预览…'
-            self.make_preview(task,record,directory/'source.mkv',directory/'preview.mp4')
-            record['preview_version']=1
+            task['message']='正在完成选帧数据…' if not task.get('preview',True) else '正在准备预览…'
+            if task.get('preview',True):self.make_preview(task,record,directory/'source.mkv',directory/'preview.mp4')
+            record['preview_version']=1 if task.get('preview',True) else 2
             (directory/'analysis.json').write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8')
             for p in directory.glob('*.json'):
                 if p.name!='analysis.json': p.unlink(missing_ok=True)

@@ -91,7 +91,7 @@ class PlatformPipelineTests(unittest.TestCase):
     def test_dash_preview_selects_separate_audio(self):
         preview=self.e.register_preview(dict(formats=[dict(url='https://cdn.bilivideo.com/v',ext='mp4',height=720,vcodec='avc1',acodec='none'),dict(url='https://cdn.bilivideo.com/a',ext='m4a',vcodec='none',acodec='mp4a')]),self.e.settings())
         self.assertTrue(preview['audio'])
-        self.e.preview_sources[preview['video']]['created']=time.time()-901
+        self.e.preview_sources[preview['video']]['created']=time.time()-7201
         with self.assertRaises(ValueError):self.e.preview_source(preview['video'])
 
     def test_douyin_watermarked_download_is_excluded_from_preview_and_cache(self):
@@ -115,13 +115,20 @@ class PreviewHTTPTests(unittest.TestCase):
     def test_session_media_handle_and_range_forwarding(self):
         from unittest.mock import Mock
         entry=self.e.register_preview(dict(formats=[dict(url='https://test.douyinvod.com/a.mp4',ext='mp4',height=720,vcodec='avc1',acodec='aac')]),self.e.settings())
-        upstream=io.BytesIO(b'0123');upstream.status=206;upstream.headers={'Content-Length':'4','Content-Range':'bytes 0-3/10','Accept-Ranges':'bytes'}
-        with patch('preview.open_media',return_value=upstream) as opened:
+        def upstream(entry,header,tools):
+            start,end=map(int,header[6:].split('-'));raw=b'0123456789'[start:end+1]
+            response=io.BytesIO(raw);response.status=206;response.headers={'Content-Length':str(len(raw)),'Content-Range':f'bytes {start}-{end}/10','Accept-Ranges':'bytes'}
+            return response
+        with patch('preview.open_media',side_effect=upstream) as opened:
             import urllib.request
             path='/s/'+self.server.token+'/preview/'+entry['video']
             with urllib.request.urlopen(urllib.request.Request(self.server.origin+path,headers={'Range':'bytes=0-3'})) as response:
                 self.assertEqual(response.status,206);self.assertEqual(response.read(),b'0123')
-            self.assertEqual(opened.call_args.args[1],'bytes=0-3')
+            self.assertEqual(opened.call_args.args[1],'bytes=0-9')
+            count=opened.call_count
+            with urllib.request.urlopen(urllib.request.Request(self.server.origin+path,headers={'Range':'bytes=2-5'})) as response:
+                self.assertEqual(response.read(),b'2345')
+            self.assertEqual(opened.call_count,count)
         with patch('preview.open_media') as opened:
             import urllib.error
             with self.assertRaises(urllib.error.HTTPError):self.request('/s/wrong/preview/'+entry['video'])

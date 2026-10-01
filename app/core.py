@@ -126,6 +126,9 @@ class Engine:
         self.scenes=SceneManager(self)
         from player import PlayerCache
         self.player_cache=PlayerCache(self)
+        from preview import ByteCache
+        self.byte_cache=ByteCache(self)
+        self.preview_origin=None
         if workers:
             for n in range(4):
                 t = threading.Thread(target=self.worker, args=(n,), daemon=True)
@@ -251,7 +254,7 @@ class Engine:
                         qualities=[dict(height=h, fps=fps[h]) for h in heights],
                         chapters=[dict(title=x.get('title',''), start=x.get('start_time',0), end=x.get('end_time',0)) for x in info.get('chapters') or []],
                         elapsed_ms=round((time.perf_counter()-started)*1000),cache_hit=False)
-            data['preview']=self.register_preview(info,s) if source['platform']!='youtube' else None
+            data['preview']=self.register_preview(info,s)
             data['parts'],data['parts_error']=fetch_parts(source,s) if source['platform']=='bilibili' else ([], '')
             with self.lock:
                 if len(self.metadata_cache) > 50:
@@ -268,13 +271,14 @@ class Engine:
         cookie_stamp = Path(s['cookies']).stat().st_mtime_ns if s['cookies'] and Path(s['cookies']).is_file() else 0
         return (url,s['proxy'],s['cookies'],cookie_stamp)
 
-    def register_preview(self, info, s):
+    def register_preview(self, info, s,quality='720'):
         formats=[dict(f,http_headers={**info.get('http_headers',{}),**f.get('http_headers',{})}) for f in info.get('formats',[]) if f.get('url') and f.get('ext') in ('mp4','m4a') and not f.get('fragments') and f.get('protocol') in (None,'http','https')]
         videos=[f for f in formats if (f.get('vcodec') or '').startswith(('avc','h264'))]
         if not videos: return None
         # Preview prefers a moderate AVC stream; download quality is independent.
-        below=[f for f in videos if 0<(f.get('height') or 0)<=720]
-        chosen=max(below or videos,key=lambda f:f.get('height') or 0) if below else min(videos,key=lambda f:f.get('height') or 99999)
+        bound=4320 if quality=='best' else int(quality)
+        below=[f for f in videos if 0<(f.get('height') or 0)<=bound]
+        chosen=max(below,key=lambda f:(f.get('height') or 0,f.get('fps') or 0,f.get('tbr') or 0)) if below else min(videos,key=lambda f:f.get('height') or 99999)
         audio=None
         if chosen.get('acodec')=='none':
             audios=[f for f in formats if f.get('vcodec')=='none' and (f.get('acodec') or '').startswith(('mp4a','aac'))]
@@ -282,7 +286,7 @@ class Engine:
             audio=max(audios,key=lambda f:f.get('abr') or f.get('tbr') or 0)
         now=time.time()
         with self.lock:
-            self.preview_sources={k:v for k,v in self.preview_sources.items() if now-v['created']<900}
+            self.preview_sources={k:v for k,v in self.preview_sources.items() if now-v['created']<7200}
             if len(self.preview_sources)>100: self.preview_sources.clear()
             ids=[]
             for fmt in [chosen]+([audio] if audio else []):
@@ -294,14 +298,50 @@ class Engine:
     def preview_source(self, key):
         with self.lock:
             entry=self.preview_sources.get(key)
-            if not entry or time.time()-entry['created']>=900:
+            if not entry or time.time()-entry['created']>=7200:
                 raise ValueError('预览地址已过期，请重新解析')
             return entry
 
-    def cached_download_info(self, url, s):
+    def stream_preview(self,url,quality):
+        source=parse_source(url);s=platform_settings(self.settings(),source['platform'])
+        quality=str(quality)
+        if quality!='best' and not (quality.isdigit() and 1<=int(quality)<=4320):raise ValueError('预览清晰度无效')
+        info=self.cached_download_info(source['url'],s)
+        if not info:
+            self.metadata(source['url'],force=True);info=self.cached_download_info(source['url'],s)
+        result=self.register_preview(info,s,quality) if info else None
+        if not result:raise ValueError('当前源没有可直接播放的 AVC 媒体，请选择其他清晰度或重新解析。')
+        return result
+
+    def cached_preview_info(self,info,quality=None):
+        if not self.preview_origin:return info
+        data=dict(info);data['formats']=[];data['http_headers']={}
+        with self.lock:sources=list(self.preview_sources.items())
+        for fmt in info.get('formats',[]):
+            copied=dict(fmt,http_headers={**info.get('http_headers',{}),**fmt.get('http_headers',{})})
+            for key,entry in sources:
+                if entry['format']['url']==fmt.get('url'):
+                    copied['url']=self.preview_origin+'preview/'+key+'?reader=1'
+                    copied['http_headers']={'User-Agent':'OnlineVideoClipper-FrameReader/1.0'};copied['protocol']='http';break
+            data['formats'].append(copied)
+        if quality is not None:
+            bound=4320 if quality=='best' else int(quality)
+            eligible=[f for f in data['formats'] if f.get('vcodec')!='none' and 0<(f.get('height') or 0)<=bound]
+            height=max((f['height'] for f in eligible),default=0)
+            local=[f for f in eligible if f['height']==height and f['url'].startswith(self.preview_origin)]
+            if not local:return info
+            chosen=max(local,key=lambda f:(f.get('fps') or 0,f.get('tbr') or 0))
+            if chosen.get('acodec')!='none':data['formats']=[chosen]
+            else:
+                audios=[f for f in data['formats'] if f.get('vcodec')=='none' and f['url'].startswith(self.preview_origin)]
+                if not audios:return info
+                data['formats']=[chosen,max(audios,key=lambda f:f.get('abr') or f.get('tbr') or 0)]
+        return data
+
+    def cached_download_info(self, url, s,max_age=300):
         with self.lock:
             hit = self.metadata_cache.get(self.cache_key(url,s))
-            if not hit or len(hit)<3 or time.time()-hit[0]>=300:
+            if not hit or len(hit)<3 or time.time()-hit[0]>=max_age:
                 return None
             # Do not reuse URLs near their server-provided expiration.
             for fmt in hit[2].get('formats',[]):

@@ -80,3 +80,12 @@ Real Bilibili BV1bK411W797 p=1 manual preparation at 28–37 seconds produced a 
 - 1040×740 desktop: inner height 701; cut panel scroll/client 535/535; body scroll height 701. This is DOM/runtime/layout verification, not screenshot-based native appearance verification.
 - Real public Bilibili BV1bK411W797 p1 at 360p: first window prepared in 1.56 s for this run, actual 0..11.166; prefetch window 5..38.333; jump 20 reused ready data; cross-window 2..25 exported successfully with frame count validation. Timing is sample-specific, not a universal performance promise.
 - Legacy automatic scene WebView2 smoke passed. Test roots, media and logs remain under E:/YouTubeClipper/work and are excluded from Git.
+
+
+## 0.12 continuous streaming — 2026-10-01
+
+- 88 fixture tests: progressive first 64 KiB before cache block completion, completed-block reuse, aborted partial cleanup, upstream range validation, suffix/invalid Range, reader requests unaffected by browser pause, authenticated flow/stream endpoints, manual frame preparation with scene detection/preview encoder made to fail if called. Prior export and frame timestamp checks retained.
+- `scripts/player_ui_smoke.py`: direct source URL unchanged across seek/fine adjustment; no frame cache during ordinary preview; screenshot original 160×90; precise export references entered queue; focused timeline ArrowRight moved frame 134→135; part buttons visible and second-part click submitted switch; no automatic mirror/scene entry.
+- `scripts/continuous_ui_smoke.py`: 40 s, ~5 MiB fixture continuous source remained unchanged at 13.95 s, no frame preparation during playback; pause/key step prepared source frames without either detector or proxy encoder. Local first metadata ~0.10 s, not a network performance guarantee.
+- Real Bilibili BV1bK411W797 p1: 23 parts visible; 35→40 s continuous playback with unchanged source, separate audio drift ~0.044 s; first frame preparation ~0.953 s and selected frame visible. No scene detection or proxy encoding. This run used available cache and network state; timings are sample-specific.
+- Desktop checks are owned WebView2 runtime/DOM/layout checks, not screenshot-based native visual QA. All fixtures and live results remain under E:/YouTubeClipper/work, excluded from source publication.
