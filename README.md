@@ -89,7 +89,7 @@ requirements-build.txt  Python 桌面和构建依赖
 
 ## 验证与参与
 
-0.9 通过 63 项自动化测试，并完成真实 B站镜头导出及桌面 DOM/布局尺寸检查；抖音样本的镜头分析也通过。结果描述的是已测样本，不保证所有视频和系统都相同；原生窗口截图级外观检查仍有限。详细记录见 [VERIFICATION.md](VERIFICATION.md)。
+0.9 通过 64 项自动化测试，并完成真实 B站镜头导出及桌面 DOM/布局尺寸检查；抖音样本的镜头分析也通过。结果描述的是已测样本，不保证所有视频和系统都相同；原生窗口截图级外观检查仍有限。详细记录见 [VERIFICATION.md](VERIFICATION.md)。
 
 欢迎提交问题和改进，见 [贡献指南](CONTRIBUTING.md)。报告问题时请移除 Cookie、Token、签名媒体地址和私人视频信息；敏感问题见 [SECURITY.md](SECURITY.md)。
 

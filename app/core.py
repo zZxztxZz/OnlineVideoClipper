@@ -1,6 +1,7 @@
 """Persistent download queue; all application data lives beside the launcher."""
 from __future__ import annotations
 import hashlib
+from contextlib import contextmanager
 import json
 import math
 import os
@@ -129,10 +130,15 @@ class Engine:
                 t.start()
                 self.threads.append(t)
 
+    @contextmanager
     def connect(self):
         c = sqlite3.connect(self.db, timeout=15)
         c.row_factory = sqlite3.Row
-        return c
+        try:
+            with c:
+                yield c
+        finally:
+            c.close()
 
     def settings(self):
         defaults = dict(output_dir=str(self.root / 'downloads'), concurrency=2, retries=3,

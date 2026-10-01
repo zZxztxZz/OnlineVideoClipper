@@ -2,6 +2,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 from pathlib import Path
 import subprocess
 import sys
@@ -23,6 +24,18 @@ class CoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT/'work')
         self.root = Path(self.temp.name)
         self.e = Engine(self.root, workers=False)
+
+    def test_database_connections_close_and_transactions_rollback(self):
+        with self.e.connect() as c:
+            c.execute("INSERT OR REPLACE INTO settings VALUES ('connection-test','1')")
+        with self.assertRaises(sqlite3.ProgrammingError):
+            c.execute('SELECT 1')
+        with self.assertRaises(ValueError):
+            with self.e.connect() as transaction:
+                transaction.execute("UPDATE settings SET value='2' WHERE key='connection-test'")
+                raise ValueError('rollback')
+        with self.e.connect() as check:
+            self.assertEqual(check.execute("SELECT value FROM settings WHERE key='connection-test'").fetchone()[0],'1')
 
     def tearDown(self):
         self.e.stop()

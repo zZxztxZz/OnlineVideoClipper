@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 import sqlite3
 import threading
 import time
@@ -117,7 +118,7 @@ class ControlTests(unittest.TestCase):
         root=self.root/'legacy'
         data=root/'data'
         data.mkdir(parents=True)
-        with sqlite3.connect(data/'queue.sqlite3') as c:
+        with closing(sqlite3.connect(data/'queue.sqlite3')) as c, c:
             c.execute("CREATE TABLE jobs(id TEXT PRIMARY KEY,fingerprint TEXT,payload TEXT NOT NULL,state TEXT NOT NULL,progress REAL DEFAULT 0,attempt INTEGER DEFAULT 0,due REAL DEFAULT 0,created REAL NOT NULL,updated REAL NOT NULL,message TEXT DEFAULT '',detail TEXT DEFAULT '',output TEXT DEFAULT '')")
             c.execute("INSERT INTO jobs(id,payload,state,created,updated) VALUES(?,?,?,?,?)",('history',json.dumps(dict(title='old')), 'complete',1,1))
         migrated=Engine(root,workers=False)
