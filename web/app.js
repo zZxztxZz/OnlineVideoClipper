@@ -148,6 +148,7 @@ let materialGeneration=0,materialImageGeneration=0,materialLoading=false,materia
 let materialFrameSeen=null,materialSeekTimer,materialStepTimer,materialPrefetchAt=0;
 let materialNavigation=0;
 let materialMarks={};
+let materialScrubbing=false,materialScrubResume=false;
 $('buffer-status').title='蓝色：已加载；绿色：下载选区。开头目标 8 秒；跳转优先前 3 秒、后 12 秒；播放向前预取 24 秒。关键帧和解码上下文可能扩大实际范围。浏览缓冲目标上限 120 秒 / 512 MiB，下载选区可临时扩展至 10 分钟；正在使用的素材受到保护。';
 const materialVideo=$('remote-video');
 const materialQuality=()=>$('quality').value==='audio'?'best':$('quality').value;
@@ -161,7 +162,7 @@ function drawMaterialRanges(){
  $('buffer-track').innerHTML=materialRanges.map(r=>`<span style="left:${100*r.start/duration}%;width:${100*(r.end-r.start)/duration}%"></span>`).join('');
  try{const r=range();$('selection-track').style.left=(100*r.start/duration)+'%';$('selection-track').style.width=(100*(r.end-r.start)/duration)+'%';}catch(e){}
 }
-function updateMaterialPosition(){if(!material)return;materialTime=material.record.times[materialIndex];$('current-time').textContent=time(materialTime);$('material-seek').value=materialTime;$('material-role').textContent=(materialRole==='start'?'起点 · 第一帧保留':materialRole==='end'?'终点 · 最后一帧保留':'当前画面')+' · '+time(materialTime);}
+function updateMaterialPosition(){if(!material)return;materialTime=material.record.times[materialIndex];if(!materialScrubbing){$('current-time').textContent=time(materialTime);$('material-seek').value=materialTime;}$('material-role').textContent=(materialRole==='start'?'起点 · 第一帧保留':materialRole==='end'?'终点 · 最后一帧保留':'当前画面')+' · '+time(materialTime);}
 async function preview(info,preserve=false){
  const t=preserve?materialTime:0;materialGeneration++;materialImageGeneration++;material=null;materialRanges=[];materialMarks={};materialRole='cursor';materialIntent=false;materialFrameSeen=null;
  materialVideo.onpause=null;materialVideo.pause();stopRemote();$('cursor-image').hidden=true;$('empty-player').hidden=true;$('volume-controls').hidden=false;materialVideo.hidden=false;
@@ -245,7 +246,9 @@ function markDisplayed(which){
 $('material-play').onclick=()=>materialIntent?pauseMaterial():playMaterial();
 $('material-back').onclick=()=>stepMaterial(-1);$('material-forward').onclick=()=>stepMaterial(1);
 $('material-seek').oninput=()=>{clearTimeout(materialSeekTimer);$('current-time').textContent=time($('material-seek').value);};
-$('material-seek').onchange=()=>{materialRole='cursor';seekMaterial(+$('material-seek').value,materialIntent);};
+$('material-seek').onpointerdown=()=>{materialScrubResume=materialIntent;materialScrubbing=true;pauseMaterial();};
+$('material-seek').onchange=()=>{const resume=materialScrubbing?materialScrubResume:materialIntent;materialScrubbing=false;materialRole='cursor';return seekMaterial(+$('material-seek').value,resume);};
+$('material-seek').onpointerup=()=>{setTimeout(()=>{if(materialScrubbing){materialScrubbing=false;if(materialScrubResume)playMaterial();}},20);};
 $('material-retry').onclick=()=>seekMaterial(materialTime,false);
 $('fine-start').onclick=async()=>{materialRole='start';await seekMaterial(secs($('start').value),false);};
 $('fine-end').onclick=async()=>{materialRole='end';await seekMaterial(Math.max(0,secs($('end').value)-.001),false);};

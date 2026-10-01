@@ -31,7 +31,7 @@ def probe():
     $('quality').innerHTML='<option value="90">90p</option>';$('quality').value='90';$('start').value=time(2.2);$('end').value=time(3.8);
     for(const id of ['fine-start','fine-end','capture-frame','download-current'])$(id).disabled=false;
     await preview(video);await wait();const initial={{id:material.id,index:materialIndex,ranges:materialRanges,iframe:!!document.querySelector('iframe'),dialog:!!$('frame-dialog')}};
-    await seekMaterial(2.2,false);await wait();const reused=material.id===initial.id;
+    $('material-seek').onpointerdown();$('material-seek').value=2.2;await $('material-seek').onchange();await wait();const reused=material.id===initial.id;
     await $('fine-start').onclick();await wait();const startBefore=materialIndex;await stepMaterial(1);await sleepUI(100);await wait();const startAfter=materialIndex,startTime=$('start').value;
     await $('fine-end').onclick();await wait();const endBefore=materialIndex;await stepMaterial(-1);await sleepUI(100);await wait();const endAfter=materialIndex,endTime=$('end').value;
     const selected=await ensureExport(range());const noExtraBuffer=materialRanges.length===1;
