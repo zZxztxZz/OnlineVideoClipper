@@ -33,14 +33,14 @@ class Desktop(NativeBridge):
             raise ValueError('保存窗口已经打开，请先完成选择。')
         try:
             path=Path(initial)
-            if not path.is_absolute() or path.suffix.lower() not in ('.mp4','.mkv','.m4a'):
+            if not path.is_absolute() or path.suffix.lower() not in ('.mp4','.mkv','.m4a','.png','.jpg'):
                 raise ValueError('保存路径无效')
             directory=path.parent
             while not directory.is_dir() and directory!=directory.parent:
                 directory=directory.parent
             result=self.window.create_file_dialog(self.webview.FileDialog.SAVE,
                 directory=str(directory),save_filename=path.name,
-                file_types=(f'Media files (*{path.suffix})',))
+                file_types=(f'{"Image" if path.suffix.lower() in (".png",".jpg") else "Media"} files (*{path.suffix})',))
             if isinstance(result,str): result=(result,)
             return dict(ok=True,path=str(result[0]) if result else '',cancelled=not bool(result))
         finally:

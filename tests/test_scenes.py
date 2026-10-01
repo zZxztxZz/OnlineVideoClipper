@@ -130,6 +130,13 @@ class SceneTests(unittest.TestCase):
             request=urllib.request.Request(server.url+f'shots/{key}/preview.mp4',headers={'Range':'bytes=0-31'})
             with urllib.request.urlopen(request) as response:
                 self.assertEqual(response.status,206);self.assertEqual(len(response.read()),32)
+            target=self.root/'api-frame.png'
+            request=urllib.request.Request(server.origin+'/api/scene/snapshot',data=json.dumps(dict(id=key,index=60,path=str(target))).encode())
+            with self.assertRaises(urllib.error.HTTPError) as err:urllib.request.urlopen(request)
+            self.assertEqual(err.exception.code,403);self.assertFalse(target.exists())
+            request.add_header('X-Session-Token',server.token)
+            with urllib.request.urlopen(request) as response:saved=json.load(response)
+            self.assertEqual(saved['time'],2);self.assertTrue(target.is_file())
         finally:server.shutdown();server.server_close()
 
     def test_nonzero_variable_frame_timestamps_and_boundary_images(self):
@@ -149,6 +156,9 @@ class SceneTests(unittest.TestCase):
         (directory/'analysis.json').write_text(json.dumps(record),encoding='utf-8')
         pictures=self.e.scenes.pictures(key,selected['start_index']+2,selected['end_index']-2)
         self.assertTrue(self.e.scenes.asset(key,pictures['end_after'].split('/')[-1]).is_file())
+        self.assertEqual(self.e.scenes.snap(key,0,'start'),dict(found=False,index=0))
+        saved=self.e.scenes.snapshot(key,selected['start_index'],str(self.root/'nonzero.png'))
+        self.assertTrue(Path(saved['path']).is_file())
 
     def test_cancel_releases_analysis_slot_and_removes_partial_cache(self):
         with patch.object(self.e.scenes,'download_command',return_value=[sys.executable,'-c','import time;time.sleep(30)']):
@@ -160,3 +170,48 @@ class SceneTests(unittest.TestCase):
         self.assertEqual(self.e.scenes.status(key)['state'],'cancelled')
         self.assertFalse(self.e.scenes.busy())
         self.assertFalse((self.e.scenes.root/key).exists())
+
+    def test_manual_preparation_skips_scene_detection_and_snaps_only_on_request(self):
+        with patch.object(self.e.scenes,'detect_cuts',wraps=self.e.scenes.detect_cuts) as detect:
+            key=self.e.scenes.start(URL,2.2,'90',6,mode='manual',begin=2.2,finish=3.8)['id']
+            self.e.scenes.tasks[key]['thread'].join(20)
+            record=self.e.scenes.status(key)
+            self.assertEqual(record['state'],'ready',record)
+            self.assertFalse(record['cuts_ready'])
+            detect.assert_not_called()
+            self.assertEqual(self.e.scenes.snap(key,66,'start'),dict(found=True,index=60))
+            self.assertEqual(self.e.scenes.snap(key,114,'end'),dict(found=True,index=120))
+            self.assertEqual(detect.call_count,1)
+
+    def test_full_resolution_screenshot_and_collision_preserve_existing_file(self):
+        from PIL import Image
+        key,data=self.analyzed()
+        target=self.root/'downloads'/'still.png';target.parent.mkdir();target.write_bytes(b'existing')
+        result=self.e.scenes.snapshot(key,60,str(target))
+        self.assertEqual(target.read_bytes(),b'existing')
+        self.assertEqual(Path(result['path']).name,'still (2).png')
+        with Image.open(result['path']) as image:
+            self.assertEqual(image.size,(160,90))
+            self.assertTrue(all(c>220 for c in image.convert('RGB').getpixel((80,45))))
+        jpeg=self.e.scenes.snapshot(key,120,str(target.with_suffix('.jpg')))
+        with Image.open(jpeg['path']) as image:
+            self.assertEqual(image.size,(160,90))
+            r,g,b=image.convert('RGB').getpixel((80,45))
+            self.assertGreater(b,200);self.assertLess(r,30)
+        self.assertEqual(self.e.settings()['last_output_dir'],str(target.parent))
+        for index,path in ((True,str(target)),(-1,str(target)),(180,str(target)),(60,'relative.png'),(60,str(target.with_suffix('.exe')))):
+            with self.assertRaises(ValueError):self.e.scenes.snapshot(key,index,path)
+
+    def test_manual_range_limit_and_snapshot_failure_cleanup(self):
+        with self.assertRaises(ValueError):self.e.scenes.start(URL,3,'90',1000,mode='manual',begin=0,finish=601)
+        key,data=self.analyzed();target=self.root/'downloads'/'failed.png'
+        with patch.object(self.e.scenes,'run',side_effect=ValueError('media failure')):
+            with self.assertRaises(ValueError):self.e.scenes.snapshot(key,60,str(target))
+        self.assertFalse(target.exists())
+
+    def test_manual_end_position_inside_last_frame_is_valid(self):
+        key=self.e.scenes.start(URL,5.999,'90',6,mode='manual',begin=5,finish=6)['id']
+        self.e.scenes.tasks[key]['thread'].join(20)
+        result=self.e.scenes.status(key)
+        self.assertEqual(result['state'],'ready',result)
+        self.assertAlmostEqual(result['last_end'],6,places=2)

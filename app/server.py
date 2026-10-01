@@ -199,10 +199,14 @@ class Handler(BaseHTTPRequestHandler):
                 op=path.rsplit('/',1)[-1]
                 if op=='start':
                     if e.updating: raise ValueError('正在更新，请稍后识别镜头。')
-                    result=e.scenes.start(data.get('url'),data.get('center'),data.get('quality'),data.get('duration'),data.get('radius',12))
+                    result=e.scenes.start(data.get('url'),data.get('center'),data.get('quality'),data.get('duration'),data.get('radius',12),
+                                          data.get('mode','scene'),data.get('begin'),data.get('finish'))
                 elif op=='status': result=e.scenes.status(data.get('id'))
                 elif op=='cancel': result=e.scenes.cancel(data.get('id'))
                 elif op=='frames': result=e.scenes.pictures(data.get('id'),data.get('start_index'),data.get('end_index'))
+                elif op=='frame': result=e.scenes.frame(data.get('id'),data.get('index'))
+                elif op=='snap': result=e.scenes.snap(data.get('id'),data.get('index'),data.get('side'))
+                elif op=='snapshot': result=e.scenes.snapshot(data.get('id'),data.get('index'),data.get('path'))
                 else: raise ValueError('接口不存在')
             elif path in ('/api/connect/start', '/api/connect/finish', '/api/choose-cookie','/api/choose-save-file'):
                 desktop = self.server.desktop

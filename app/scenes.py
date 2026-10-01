@@ -42,7 +42,7 @@ class SceneManager:
                 shutil.rmtree(p,ignore_errors=True)
                 total-=size
 
-    def start(self, url, center, quality, duration, radius=12):
+    def start(self, url, center, quality, duration, radius=12, mode='scene', begin=None, finish=None):
         if self.stopped.is_set(): raise ValueError('程序正在退出')
         source=parse_source(url)
         if source['short']: raise ValueError('请先解析视频，再识别镜头。')
@@ -52,10 +52,17 @@ class SceneManager:
         if not all(math.isfinite(x) for x in (center,duration)) or not 0<=center<duration or not 0<duration<=604800:
             raise ValueError('定位时间超出视频范围，请先解析有效的视频时长。')
         if radius not in (12,30,60): raise ValueError('搜索范围无效')
+        if mode not in ('scene','manual'): raise ValueError('准备方式无效')
+        if mode=='manual':
+            begin=float(begin);finish=float(finish)
+            if not all(math.isfinite(x) for x in (begin,finish)) or not 0<=begin<finish<=duration or not begin<=center<finish:
+                raise ValueError('请检查选区和定位时间。')
+            if finish-begin>600: raise ValueError('逐帧微调每次支持 10 分钟以内的选区，请先缩短选区。')
         if not self.slot.acquire(blocking=False): raise ValueError('正在识别镜头，请先等待完成或取消。')
         key=uuid.uuid4().hex
         task=dict(id=key,url=source['url'],center=center,quality=str(quality),duration=duration,radius=radius,
-                  state='working',message='正在读取附近视频…',cancel=threading.Event(),process=None)
+                  state='working',message='正在准备逐帧预览…' if mode=='manual' else '正在读取附近视频…',
+                  mode=mode,begin=begin,finish=finish,cancel=threading.Event(),process=None)
         with self.lock: self.tasks[key]=task
         task['thread']=threading.Thread(target=self.work,args=(task,),daemon=True)
         task['thread'].start()
@@ -117,16 +124,15 @@ class SceneManager:
         times=[float(f['best_effort_timestamp_time']) for f in frames]
         if len(times)<2 or any(not math.isfinite(x) for x in times) or any(b<=a for a,b in zip(times,times[1:])):
             raise ValueError('该视频帧时间不连续，暂不能可靠地逐帧选镜头。')
-        if times[0]>task['center'] or times[-1]<task['center'] or times[-1]>task['duration']+3:
+        if times[0]>task['center'] or times[-1]>task['duration']+3:
             raise ValueError('附近视频的时间轴无法与源视频对齐，请重新解析后再试。')
         step=statistics.median(b-a for a,b in zip(times,times[1:]))
         last_duration=float(frames[-1].get('duration_time') or frames[-1].get('pkt_duration_time') or step)
         last_end=min(task['duration'],times[-1]+max(step/2,last_duration))
         if last_end<=times[-1]: last_end=times[-1]+step
-        log=self.run([str(self.engine.tools/'ffmpeg.exe'),'-hide_banner','-loglevel','info','-copyts','-i',str(media),
-            '-vf','scale=320:-2,scdet=threshold=12,metadata=print','-an','-f','null','-'],task)
-        cuts=sorted({bisect.bisect_left(times,float(t)-.0005) for t in re.findall(r'lavfi\.scd\.time=([\d.]+)',log)})
-        cuts=[i for i in cuts if 0<i<len(times)]
+        if task['center']>=last_end+.0005:
+            raise ValueError('定位时间已超出读取到的视频画面，请稍向前定位后重试。')
+        cuts=self.detect_cuts(task,media,times) if task.get('mode')!='manual' else []
         edges=[0]+cuts+[len(times)]
         left_known=start==0 and times[0]<=step*1.5
         right_known=end>=task['duration']-.001 and last_end>=task['duration']-max(.5,step*2)
@@ -135,7 +141,14 @@ class SceneManager:
         stream=probe.get('streams',[{}])[0]
         return dict(url=task['url'],quality=task['quality'],duration=task['duration'],center=task['center'],
             times=times,last_end=last_end,shots=shots,selected_shot=selected,
-            width=stream.get('width'),height=stream.get('height'),fps=round(1/step,3),radius=task['radius'])
+            width=stream.get('width'),height=stream.get('height'),fps=round(1/step,3),radius=task['radius'],
+            cuts=cuts,cuts_ready=task.get('mode')!='manual',mode=task.get('mode','scene'))
+
+    def detect_cuts(self,task,media,times):
+        log=self.run([str(self.engine.tools/'ffmpeg.exe'),'-hide_banner','-loglevel','info','-copyts','-i',str(media),
+            '-vf','scale=320:-2,scdet=threshold=12,metadata=print','-an','-f','null','-'],task)
+        return sorted({i for t in re.findall(r'lavfi\.scd\.time=([\d.]+)',log)
+                       if 0<(i:=bisect.bisect_left(times,float(t)-.0005))<len(times)})
 
     def work(self, task):
         directory=self.root/task['id']
@@ -143,8 +156,10 @@ class SceneManager:
             directory.mkdir()
             self.prune()
             record=None
-            for radius in ([12,30] if task['radius']==12 else [task['radius']]):
-                start=max(0,task['center']-radius);end=min(task['duration'],task['center']+radius)
+            manual=task.get('mode')=='manual'
+            for radius in ([task['radius']] if manual else [12,30] if task['radius']==12 else [task['radius']]):
+                start=max(0,task['begin']-3) if manual else max(0,task['center']-radius)
+                end=min(task['duration'],task['finish']+3) if manual else min(task['duration'],task['center']+radius)
                 task['message']='正在读取附近视频…' if radius==task['radius'] else '附近未找到完整边界，自动扩大搜索范围…'
                 task['radius']=radius
                 output=self.run(self.download_command(task,start,end,directory),task)
@@ -156,7 +171,7 @@ class SceneManager:
                 if media!=target: os.replace(media,target)
                 record=self.analyze(task,target,start,end)
                 selected=record['shots'][record['selected_shot']]
-                if selected['left_found'] and selected['right_found'] or start==0 and end==task['duration']: break
+                if manual or selected['left_found'] and selected['right_found'] or start==0 and end==task['duration']: break
             task['message']='正在准备镜头预览…'
             self.make_preview(task,record,directory/'source.mkv',directory/'preview.mp4')
             (directory/'analysis.json').write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8')
@@ -254,6 +269,59 @@ class SceneManager:
         path=self.root/key/name
         if not path.is_file(): raise ValueError('文件不存在')
         return path
+
+    def frame(self,key,index):
+        record=self.record(key)
+        if type(index) is not int or not 0<=index<len(record['times']): raise ValueError('帧位置无效')
+        image=self.pictures(key,index,index+1)['start_after']
+        return dict(index=index,time=record['times'][index],image=image,width=record['width'],height=record['height'])
+
+    def snap(self,key,index,side):
+        record=self.record(key)
+        if side not in ('start','end') or type(index) is not int or not 0<=index<=len(record['times']):
+            raise ValueError('吸附位置无效')
+        with self.picture_lock:
+            if not record.get('cuts_ready'):
+                task=dict(cancel=threading.Event(),process=None)
+                record['cuts']=self.detect_cuts(task,self.root/key/'source.mkv',record['times'])
+                record['cuts_ready']=True
+                (self.root/key/'analysis.json').write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8')
+            candidates=list(record.get('cuts',[]))
+            if side=='start' and record['times'][0]<.05: candidates.append(0)
+            if side=='end' and record['last_end']>=record['duration']-.05: candidates.append(len(record['times']))
+            matches=[i for i in candidates if i<=index] if side=='start' else [i for i in candidates if i>=index]
+            return dict(found=bool(matches),index=(max(matches) if side=='start' else min(matches)) if matches else index)
+
+    def snapshot(self,key,index,path):
+        record=self.record(key)
+        if type(index) is not int or not 0<=index<len(record['times']): raise ValueError('帧位置无效')
+        extension=Path(str(path)).suffix.lower()
+        if extension not in ('.png','.jpg'): raise ValueError('截图支持 PNG 或 JPG 文件。')
+        from core import output_target
+        requested=output_target(path,'best','compatible',extension=extension)
+        target=requested;number=1
+        with self.engine.lock:
+            while True:
+                try:
+                    with target.open('xb'): pass
+                    break
+                except FileExistsError:
+                    number+=1;target=requested.with_name(f'{requested.stem} ({number}){extension}')
+        temporary=self.root/key/('still-'+uuid.uuid4().hex+extension)
+        try:
+            stamp=record['times'][index]
+            task=dict(cancel=threading.Event(),process=None)
+            self.run([str(self.engine.tools/'ffmpeg.exe'),'-v','error','-y',
+                '-ss',str(max(0,stamp-record['times'][0]-1)),'-copyts','-i',str(self.root/key/'source.mkv'),
+                '-vf',rf'select=lt(abs(t-{stamp})\,0.0004)','-frames:v','1','-q:v','2',str(temporary)],task,60)
+            if not temporary.is_file(): raise ValueError('没有读取到这一帧，请重新准备逐帧预览。')
+            shutil.copyfile(temporary,target)
+            self.engine.save_settings(dict(last_output_dir=str(target.parent)))
+            return dict(path=str(target),time=stamp,width=record['width'],height=record['height'])
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+        finally: temporary.unlink(missing_ok=True)
 
     def export_command(self,payload,target):
         record,a,b=self.selection(payload['shot_cache'],payload['shot_start_frame'],payload['shot_end_frame'])

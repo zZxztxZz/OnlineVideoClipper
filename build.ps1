@@ -27,6 +27,7 @@ $stagedApp = Join-Path $stagingRoot 'OnlineVideoClipper'
 Copy-Item -LiteralPath (Join-Path $projectRoot 'tools') -Destination $stagedApp -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot '使用说明.txt') -Destination $stagedApp -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY.md') -Destination $stagedApp -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $stagedApp -Force
 New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
 # Replace only application-owned runtime directories, preserving data/downloads.
 foreach ($component in @('_internal','tools')) {

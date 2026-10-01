@@ -48,9 +48,9 @@ def safe_name(value):
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f%]', '_', str(value))
     return value.strip(' .')[:90] or 'clip'
 
-def output_target(value,quality,preset):
+def output_target(value,quality,preset,extension=None):
     target=Path(str(value))
-    extension='.m4a' if quality=='audio' else '.mp4' if preset=='compatible' else '.mkv'
+    extension=extension or ('.m4a' if quality=='audio' else '.mp4' if preset=='compatible' else '.mkv')
     if not target.is_absolute() or target.suffix.lower()!=extension:
         raise ValueError('请选择绝对保存路径，文件扩展名应为 '+extension)
     if len(target.name)>180 or re.search(r'[<>:"/\\|?*\x00-\x1f]',target.name) or target.name!=target.name.strip(' .') or target.stem.upper().split('.')[0].rstrip(' ') in {

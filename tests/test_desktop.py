@@ -69,3 +69,9 @@ class DesktopTests(TestCase):
         self.desktop.window_resized(1920,1080)
         self.desktop.remember_window()
         self.engine.save_settings.assert_called_with(dict(window_width=1100,window_height=780,window_maximized=True))
+
+    def test_native_image_save_accepts_png_and_jpg(self):
+        for extension in ('.png','.jpg'):
+            target=self.engine.data/('frame'+extension)
+            self.desktop.window.create_file_dialog.return_value=str(target)
+            self.assertEqual(self.desktop.choose_save_file(str(target))['path'],str(target))

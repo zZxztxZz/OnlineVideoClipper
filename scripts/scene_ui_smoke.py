@@ -29,7 +29,7 @@ def probe():
     clips=[{{start:0,end:1,name:'existing'}}];$('shot-download').click();
     const quick={{modal:$('save-dialog').open,frames:[saveItems[0].shot_start_frame,saveItems[0].shot_end_frame],existing:clips.length,precise:$('mode').value}};
     $('save-dialog').close();await new Promise(r=>setTimeout(r,100));$('shot-dialog').showModal();shotControls(true);selectShot(1);for(let i=0;i<50&&$('shot-add').disabled;i++)await new Promise(r=>setTimeout(r,100));$('shot-add').click();
-    window.shotTestResult={{layout,initial,stepped,quick,added:clips.length,badge:$('clips-list').textContent.includes('精确镜头'),dialogClosed:!$('shot-dialog').open}};window.shotTestDone=true;
+    window.shotTestResult={{layout,initial,stepped,quick,added:clips.length,badge:$('clips-list').textContent.includes('逐帧精确'),dialogClosed:!$('shot-dialog').open}};window.shotTestDone=true;
   }})().catch(e=>{{window.shotTestResult={{error:e.message}};window.shotTestDone=true;}})''')
   for _ in range(100):
    if desktop.window.evaluate_js('window.shotTestDone'):break
