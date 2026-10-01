@@ -94,6 +94,7 @@ class PlayerCache:
             try:
                 if time.time()-path.stat().st_mtime>86400:continue
                 record=self.scenes.record(path.parent.name)
+                if record.get('preview_version')!=1:continue
                 if (record['url'],record['quality'],record['duration'])!=session:continue
                 if record['last_end']-record['times'][0]>self.MAX_SECONDS:continue
                 if not (path.parent/'preview.mp4').is_file() or not (path.parent/'source.mkv').is_file():continue

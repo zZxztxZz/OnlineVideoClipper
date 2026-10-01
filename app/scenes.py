@@ -178,6 +178,7 @@ class SceneManager:
                 if manual or selected['left_found'] and selected['right_found'] or start==0 and end==task['duration']: break
             task['message']='正在准备镜头预览…'
             self.make_preview(task,record,directory/'source.mkv',directory/'preview.mp4')
+            record['preview_version']=1
             (directory/'analysis.json').write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8')
             for p in directory.glob('*.json'):
                 if p.name!='analysis.json': p.unlink(missing_ok=True)
@@ -194,7 +195,7 @@ class SceneManager:
         self.run([str(self.engine.tools/'ffmpeg.exe'),'-hide_banner','-loglevel','error','-y','-copyts','-i',str(media),
             '-map','0:v:0','-map','0:a:0?','-vf',r'scale=w=min(720\,iw):h=-2,setpts=PTS-STARTPTS',
             '-af',f'atrim=start={first},asetpts=PTS-STARTPTS','-c:v','libx264','-preset','veryfast','-crf','23',
-            '-c:a','aac','-fps_mode','passthrough','-movflags','+faststart',str(target)],task)
+            '-c:a','aac','-fps_mode','passthrough','-enc_time_base','filter','-movflags','+faststart',str(target)],task)
 
     def record(self,key):
         if not isinstance(key,str) or not re.fullmatch(r'[0-9a-f]{32}',key): raise ValueError('镜头缓存无效')
@@ -259,7 +260,7 @@ class SceneManager:
                 expression='+'.join(rf'lt(abs(t-{record["times"][i]})\,0.0004)' for i in group)
                 seek=max(0,record['times'][group[0]]-record['times'][0]-1)
                 self.run([str(self.engine.tools/'ffmpeg.exe'),'-v','error','-y','-ss',str(seek),'-copyts','-i',str(directory/'source.mkv'),
-                    '-vf',rf'select={expression},scale=w=min(480\,iw):h=-2','-fps_mode','vfr','-frames:v',str(len(group)),str(pattern)],task,30)
+                    '-vf',rf'select={expression},scale=w=min(720\,iw):h=-2','-fps_mode','vfr','-frames:v',str(len(group)),str(pattern)],task,30)
                 for j,i in enumerate(group,1):
                     source=Path(str(pattern).replace('%02d',f'{j:02d}'))
                     if not source.is_file(): raise ValueError('边界帧读取失败，请重新识别。')

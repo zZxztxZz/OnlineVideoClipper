@@ -143,3 +143,17 @@ class PlayerTests(unittest.TestCase):
         segments=self.e.player_cache.selection(dict(url=URL,quality='90',start=2,end=4))['segments']
         result=subprocess.run(self.e.scenes.segments_command(dict(url=URL,quality='90',player_segments=segments),self.root/'silent-export.mkv'),capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_preview_preserves_nonzero_vfr_frame_timestamps(self):
+        import threading
+        media=self.root/'variable.mkv';preview=self.root/'variable.mp4'
+        subprocess.run([str(ROOT/'tools/ffmpeg.exe'),'-v','error','-y','-i',str(self.media),
+            '-vf',r'select=not(eq(mod(n\,3)\,1)),setpts=PTS+20/TB','-an','-fps_mode','passthrough',
+            '-c:v','libx264',str(media)],check=True,capture_output=True)
+        task=dict(url=URL,quality='90',duration=26,center=23,radius=12,mode='manual',cancel=threading.Event(),process=None)
+        record=self.e.scenes.analyze(task,media,20,26)
+        self.e.scenes.make_preview(task,record,media,preview)
+        frames=json.loads(subprocess.check_output([str(ROOT/'tools/ffprobe.exe'),'-v','error','-select_streams','v:0','-show_frames','-show_entries','frame=best_effort_timestamp_time','-of','json',str(preview)]))['frames']
+        times=[float(f['best_effort_timestamp_time']) for f in frames]
+        self.assertEqual(len(times),len(record['times']))
+        self.assertTrue(all(abs(t-(original-record['times'][0]))<.0004 for t,original in zip(times,record['times'])))

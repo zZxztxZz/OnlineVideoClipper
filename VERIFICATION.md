@@ -75,7 +75,7 @@ Real Bilibili BV1bK411W797 p=1 manual preparation at 28–37 seconds produced a 
 
 ## 0.11 unified player — 2026-10-01
 
-- 79 local fixture tests: initial/jump/prefetch windows, promotion/cancellation, reuse/restart, eviction/protected jobs, API authorization, gaps/source validation, silent inputs and exact cross-window frame/timestamp continuity; existing 69 tests retained.
+- 80 local fixture tests: initial/jump/prefetch windows, promotion/cancellation, reuse/restart, eviction/protected jobs, API authorization, gaps/source validation, silent inputs and exact cross-window frame/timestamp continuity; existing 69 tests retained.
 - Owned WebView2 `scripts/player_ui_smoke.py`: no iframe or frame modal, same source id before/after seek and fine adjustment, start 66→67, end 113→112, selected export 67..113, no second download window, original-size PNG 160×90. Playback/pause displays the selected source frame.
 - 1040×740 desktop: inner height 701; cut panel scroll/client 535/535; body scroll height 701. This is DOM/runtime/layout verification, not screenshot-based native appearance verification.
 - Real public Bilibili BV1bK411W797 p1 at 360p: first window prepared in 1.56 s for this run, actual 0..11.166; prefetch window 5..38.333; jump 20 reused ready data; cross-window 2..25 exported successfully with frame count validation. Timing is sample-specific, not a universal performance promise.
