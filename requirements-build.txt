@@ -1,0 +1,4 @@
+pyinstaller==6.22.3
+pystray==0.19.5
+pillow==12.3.0
+pywebview==6.2.1

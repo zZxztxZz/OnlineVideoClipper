@@ -1,0 +1,22 @@
+# Local runtime, credentials and media (never commit)
+/.venv/
+/work/
+/tools/
+/dist/
+/data/
+/downloads/
+.env
+.env.*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.log
+*.part
+*.ytdl
+*cookies*.txt
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.vscode/
+.idea/

@@ -1,0 +1,29 @@
+name: Windows tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download runtime tools
+        shell: pwsh
+        run: ./setup.ps1
+      - name: Install desktop dependencies
+        shell: pwsh
+        run: ./.venv/Scripts/python.exe -m pip install -r requirements-build.txt
+      - name: Run local fixture tests
+        shell: pwsh
+        run: ./.venv/Scripts/python.exe -m unittest discover -s tests -v
