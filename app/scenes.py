@@ -25,11 +25,15 @@ class SceneManager:
         self.stopped=threading.Event()
         self.processes=set()
         self.tasks={}
+        self.player_pins=set()
         self.prune()
 
     def prune(self):
         with self.engine.connect() as c:
-            pinned={json.loads(r['payload']).get('shot_cache') for r in c.execute("SELECT payload FROM jobs WHERE state IN ('queued','retrying','paused','downloading','processing')")}
+            pinned=set(self.player_pins)
+            for r in c.execute("SELECT payload FROM jobs WHERE state IN ('queued','retrying','paused','downloading','processing')"):
+                payload=json.loads(r['payload']);pinned.add(payload.get('shot_cache'))
+                pinned.update(x['id'] for x in payload.get('player_segments',[]))
         with self.lock: pinned.update(k for k,t in self.tasks.items() if t['state']=='working')
         directories=[]
         for p in self.root.iterdir():
@@ -332,3 +336,36 @@ class SceneManager:
             '-af',f'atrim=start={a}:end={b},asetpts=PTS-STARTPTS','-c:v','libx264','-preset','fast','-crf','18',
             '-c:a','aac','-b:a','192k','-fps_mode','passthrough','-enc_time_base','filter',
             '-progress','pipe:1','-nostats','-f','matroska',str(target)]
+
+    def validate_segments(self,segments,url,quality):
+        if not isinstance(segments,list) or not 1<=len(segments)<=64: raise ValueError('素材缓冲引用无效')
+        checked=[];previous=None
+        for item in segments:
+            if not isinstance(item,dict): raise ValueError('素材缓冲引用无效')
+            record,a,b=self.selection(item.get('id'),item.get('start'),item.get('end'))
+            if record['url']!=url or record['quality']!=quality: raise ValueError('素材视频或清晰度不匹配')
+            if previous is not None and abs(a-previous)>.002: raise ValueError('选区缓冲不连续，请重新加载缺失的位置。')
+            checked.append((record,a,b));previous=b
+        return checked,checked[0][1],checked[-1][2]
+
+    def segments_command(self,payload,target):
+        segments=payload['player_segments']
+        records,_,_=self.validate_segments(segments,payload['url'],payload['quality'])
+        command=[str(self.engine.tools/'ffmpeg.exe'),'-hide_banner','-loglevel','error','-y','-copyts']
+        filters=[];labels=[]
+        for n,(item,(record,a,b)) in enumerate(zip(segments,records)):
+            media=self.root/item['id']/'source.mkv'
+            command+=['-i',str(media)]
+            probe=json.loads(subprocess.check_output([str(self.engine.tools/'ffprobe.exe'),'-v','error',
+                '-show_entries','stream=codec_type','-of','json',str(media)],creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),timeout=30))
+            audio=any(s['codec_type']=='audio' for s in probe.get('streams',[]))
+            filters.append(f'[{n}:v]trim=start_frame={item["start"]}:end_frame={item["end"]},setpts=PTS-STARTPTS[v{n}]')
+            if audio:
+                filters.append(f'[{n}:a]atrim=start={a}:end={b},asetpts=PTS-{a}/TB,aresample=48000:async=1:first_pts=0,apad,atrim=duration={b-a}[a{n}]')
+            else:
+                filters.append(f'anullsrc=r=48000:cl=stereo,atrim=duration={b-a}[a{n}]')
+            labels.append(f'[v{n}][a{n}]')
+        filters.append(''.join(labels)+f'concat=n={len(segments)}:v=1:a=1[v][a]')
+        return command+['-filter_complex',';'.join(filters),'-map','[v]','-map','[a]',
+            '-c:v','libx264','-preset','fast','-crf','18','-c:a','aac','-b:a','192k',
+            '-fps_mode','passthrough','-enc_time_base','filter','-progress','pipe:1','-nostats','-f','matroska',str(target)]

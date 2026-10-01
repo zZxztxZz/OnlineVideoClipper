@@ -124,6 +124,8 @@ class Engine:
                     c.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',('last_output_dir',json.dumps(directory)))
         from scenes import SceneManager
         self.scenes=SceneManager(self)
+        from player import PlayerCache
+        self.player_cache=PlayerCache(self)
         if workers:
             for n in range(4):
                 t = threading.Thread(target=self.worker, args=(n,), daemon=True)
@@ -340,7 +342,12 @@ class Engine:
         payloads = []
         for clip in clips:
             shot={}
-            if clip.get('shot_cache'):
+            if clip.get('player_segments'):
+                if full or quality=='audio': raise ValueError('逐帧选区需要视频格式')
+                _,a,b=self.scenes.validate_segments(clip['player_segments'],url,quality)
+                clip=dict(clip,start=a,end=b)
+                shot=dict(player_segments=clip['player_segments'])
+            elif clip.get('shot_cache'):
                 if full or quality=='audio': raise ValueError('镜头选区目前用于视频片段导出。')
                 record,a,b=self.scenes.selection(clip['shot_cache'],clip.get('shot_start_frame'),clip.get('shot_end_frame'))
                 if record['url']!=url or record['quality']!=quality: raise ValueError('分析用清晰度或视频已改变，请保持原清晰度或重新识别镜头。')
@@ -369,6 +376,7 @@ class Engine:
             for p in payloads:
                 identity={k:p[k] for k in ('url','start','end','quality','mode','preset','output_dir','full','filename')}
                 if p.get('shot_cache'): identity.update({k:p[k] for k in ('shot_cache','shot_start_frame','shot_end_frame')})
+                if p.get('player_segments'): identity['player_segments']=p['player_segments']
                 fp = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
                 if c.execute("SELECT 1 FROM jobs WHERE fingerprint=? AND state NOT IN ('failed','cancelled')", (fp,)).fetchone():
                     duplicates += 1
@@ -420,7 +428,7 @@ class Engine:
                 payload=json.loads(row['payload'])
                 target=output_target(path,payload['quality'],payload['preset'])
                 payload.update(output_dir=str(target.parent),filename=target.name)
-                fingerprint=hashlib.sha256(json.dumps({k:payload.get(k,False if k=='full' else '') for k in ('url','start','end','quality','mode','preset','output_dir','full','filename','shot_cache','shot_start_frame','shot_end_frame')},sort_keys=True).encode()).hexdigest()
+                fingerprint=hashlib.sha256(json.dumps({k:payload.get(k,False if k=='full' else '') for k in ('url','start','end','quality','mode','preset','output_dir','full','filename','shot_cache','shot_start_frame','shot_end_frame','player_segments')},sort_keys=True).encode()).hexdigest()
                 self.patch(job_id,payload=json.dumps(payload,ensure_ascii=False),fingerprint=fingerprint,message='保存位置已更改，可重试或继续下载')
             elif action in ('up','down','first'):
                 if row['state'] not in ('queued','retrying','paused'):
@@ -498,6 +506,8 @@ class Engine:
         p = payload
         work = self.data / 'jobs' / job_id
         work.mkdir(parents=True, exist_ok=True)
+        if p.get('player_segments'):
+            return self.scenes.segments_command(p,work/'media.mkv')
         if p.get('shot_cache'):
             return self.scenes.export_command(p,work/'media.mkv')
         s=platform_settings(s,parse_source(p['url'])['platform'])
@@ -587,10 +597,10 @@ class Engine:
         try:
             settings = platform_settings(self.settings(),parse_source(payload['url'])['platform'])
             command = self.command_for(job_id, payload, settings)
-            if payload.get('shot_cache'):
+            if payload.get('shot_cache') or payload.get('player_segments'):
                 output=self.data/'jobs'/job_id/'media.mkv'
                 self.patch(job_id,message='从分析缓存逐帧精确导出')
-            cached = self.cached_download_info(payload['url'],settings) if attempt==1 and not force_fresh and not payload.get('shot_cache') else None
+            cached = self.cached_download_info(payload['url'],settings) if attempt==1 and not force_fresh and not payload.get('shot_cache') and not payload.get('player_segments') else None
             if cached:
                 cache_file=self.data/'jobs'/job_id/'source-info.json'
                 cache_file.write_text(json.dumps(cached,ensure_ascii=False),encoding='utf-8')
@@ -677,11 +687,12 @@ class Engine:
                     raise RuntimeError('最终文件检查失败')
             if not payload.get('full') and payload['mode'] == 'precise' and abs(duration-(payload['end']-payload['start'])) > 1:
                 raise RuntimeError('精确片段时长检查失败，请重新尝试')
-            if payload.get('shot_cache'):
+            if payload.get('shot_cache') or payload.get('player_segments'):
                 count=subprocess.run([str(self.tools/'ffprobe.exe'),'-v','error','-select_streams','v:0','-count_frames',
                     '-show_entries','stream=nb_read_frames','-of','json',str(output)],capture_output=True,encoding='utf-8',creationflags=NO_WINDOW,timeout=60)
                 counted=json.loads(count.stdout) if count.returncode==0 else {}
-                if int(counted.get('streams',[{}])[0].get('nb_read_frames',0))!=payload['shot_end_frame']-payload['shot_start_frame']:
+                expected=sum(x['end']-x['start'] for x in payload['player_segments']) if payload.get('player_segments') else payload['shot_end_frame']-payload['shot_start_frame']
+                if int(counted.get('streams',[{}])[0].get('nb_read_frames',0))!=expected:
                     raise RuntimeError('镜头导出帧数检查失败，请重新识别后再试。')
             destination = Path(payload['output_dir'])
             destination.mkdir(parents=True, exist_ok=True)
@@ -737,6 +748,7 @@ class Engine:
                 self.processes.pop(job_id, None)
 
     def stop(self):
+        self.player_cache.stop()
         self.stopping.set()
         self.scenes.stop()
         self.wake.set()

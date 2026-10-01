@@ -71,3 +71,12 @@ Repository publication: Windows/Python 3.11 CI exposed SQLite connections left o
 69 tests pass, with new coverage for manual preparation skipping scene detection, lazy cut snapping, last-frame timing, original-size PNG/JPG output, frame colour correspondence, collision preservation, invalid indices/paths, failed-export cleanup, protected screenshot API and native image save options. Native WebView2 DOM smoke at 1040x740 verified start/end stepping and arrow keys, exact-index preservation through direct save and the main workbench, standalone screenshot controls, and actual PNG generation through the HTTP API. The picker in this smoke is replaced with a test-only path; real native picker interaction is not automated. Cut panel and frame dialog measured 535/535 and 626/626 pixels of content/client height, with no scrolling for normal controls. Old automatic scene tool smoke still passes.
 
 Real Bilibili BV1bK411W797 p=1 manual preparation at 28–37 seconds produced a 640x360 PNG of the 28-second frame, and a 214-frame MP4 after one-frame adjustments at both boundaries. Media assets and test profiles remain under work/ and are not committed. Screenshot quality is that of the selected original stream, not the 480px viewing proxy. Manual preparation is limited to 10-minute selections; standalone screenshots fetch only nearby media.
+
+
+## 0.11 unified player — 2026-10-01
+
+- 79 local fixture tests: initial/jump/prefetch windows, promotion/cancellation, reuse/restart, eviction/protected jobs, API authorization, gaps/source validation, silent inputs and exact cross-window frame/timestamp continuity; existing 69 tests retained.
+- Owned WebView2 `scripts/player_ui_smoke.py`: no iframe or frame modal, same source id before/after seek and fine adjustment, start 66→67, end 113→112, selected export 67..113, no second download window, original-size PNG 160×90. Playback/pause displays the selected source frame.
+- 1040×740 desktop: inner height 701; cut panel scroll/client 535/535; body scroll height 701. This is DOM/runtime/layout verification, not screenshot-based native appearance verification.
+- Real public Bilibili BV1bK411W797 p1 at 360p: first window prepared in 1.56 s for this run, actual 0..11.166; prefetch window 5..38.333; jump 20 reused ready data; cross-window 2..25 exported successfully with frame count validation. Timing is sample-specific, not a universal performance promise.
+- Legacy automatic scene WebView2 smoke passed. Test roots, media and logs remain under E:/YouTubeClipper/work and are excluded from Git.

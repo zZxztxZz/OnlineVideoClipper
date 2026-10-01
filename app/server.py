@@ -195,7 +195,14 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('请求格式无效')
             path = urlparse(self.path).path
             e = self.server.engine
-            if path.startswith('/api/scene/'):
+            if path.startswith('/api/player/'):
+                if e.updating: raise ValueError('正在更新，请稍后加载素材。')
+                op=path.rsplit('/',1)[-1]
+                if op=='request': result=e.player_cache.request(data)
+                elif op=='status': result=e.player_cache.status()
+                elif op=='selection': result=e.player_cache.selection(data)
+                else: raise ValueError('接口不存在')
+            elif path.startswith('/api/scene/'):
                 op=path.rsplit('/',1)[-1]
                 if op=='start':
                     if e.updating: raise ValueError('正在更新，请稍后识别镜头。')
