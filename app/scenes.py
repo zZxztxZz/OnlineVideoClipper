@@ -274,7 +274,7 @@ class SceneManager:
 
     def asset(self,key,name):
         self.record(key)
-        if name!='preview.mp4' and not re.fullmatch(r'frame-\d+\.jpg',name): raise ValueError('文件无效')
+        if name!='preview.mp4' and not re.fullmatch(r'(frame-\d+\.jpg|fullframe-\d+\.png)',name): raise ValueError('文件无效')
         path=self.root/key/name
         if not path.is_file(): raise ValueError('文件不存在')
         return path
@@ -282,8 +282,35 @@ class SceneManager:
     def frame(self,key,index):
         record=self.record(key)
         if type(index) is not int or not 0<=index<len(record['times']): raise ValueError('帧位置无效')
-        image=self.pictures(key,index,index+1)['start_after']
+        path=self.full_frame(key,index)
+        image=f'shots/{key}/{path.name}'
         return dict(index=index,time=record['times'][index],image=image,width=record['width'],height=record['height'])
+
+    def full_frame(self,key,index):
+        record=self.record(key)
+        if type(index) is not int or not 0<=index<len(record['times']): raise ValueError('帧位置无效')
+        directory=self.root/key
+        target=directory/f'fullframe-{index}.png'
+        with self.picture_lock:
+            if not target.is_file():
+                stamp=record['times'][index]
+                temporary=directory/('still-'+uuid.uuid4().hex+'.png')
+                try:
+                    self.run([str(self.engine.tools/'ffmpeg.exe'),'-v','error','-y',
+                        '-ss',str(max(0,stamp-record['times'][0]-1)),'-copyts','-i',str(directory/'source.mkv'),
+                        '-vf',rf'select=lt(abs(t-{stamp})\,0.0004)','-frames:v','1','-compression_level','1',str(temporary)],
+                        dict(cancel=threading.Event(),process=None),60)
+                    if not temporary.is_file(): raise ValueError('没有读取到这一帧，请重新准备逐帧预览。')
+                    os.replace(temporary,target)
+                finally: temporary.unlink(missing_ok=True)
+            os.utime(target,None)
+            # Display images are disposable; source frame references remain valid.
+            images=sorted(directory.glob('fullframe-*.png'),key=lambda p:p.stat().st_mtime,reverse=True)
+            total=0
+            for n,image in enumerate(images):
+                total+=image.stat().st_size
+                if image!=target and (n>=48 or total>128*1024*1024): image.unlink(missing_ok=True)
+        return target
 
     def snap(self,key,index,side):
         record=self.record(key)

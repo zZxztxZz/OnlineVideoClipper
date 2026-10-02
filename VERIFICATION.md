@@ -89,3 +89,11 @@ Real Bilibili BV1bK411W797 p=1 manual preparation at 28–37 seconds produced a 
 - `scripts/continuous_ui_smoke.py`: 40 s, ~5 MiB fixture continuous source remained unchanged at 13.95 s, no frame preparation during playback; pause/key step prepared source frames without either detector or proxy encoder. Local first metadata ~0.10 s, not a network performance guarantee.
 - Real Bilibili BV1bK411W797 p1: 23 parts visible; 35→40 s continuous playback with unchanged source, separate audio drift ~0.044 s; first frame preparation ~0.953 s and selected frame visible. No scene detection or proxy encoding. This run used available cache and network state; timings are sample-specific.
 - Desktop checks are owned WebView2 runtime/DOM/layout checks, not screenshot-based native visual QA. All fixtures and live results remain under E:/YouTubeClipper/work, excluded from source publication.
+
+
+## 0.13 player controls / original frames / clipboard — 2026-10-02
+
+- 90 local tests passed. A 1920×1080 FFV1 source verifies original-size lossless PNG, ignoring legacy 720px thumbnails, cache reuse and index validation. Copy API checks session authorization, desktop requirement and rejection of invalid indices before invoking native clipboard.
+- Owned WebView2 smoke confirms grouped clock, midpoint hover at 00:00:03.000 on a 6-second fixture, hiding on pointer leave, copy button invoking the native bridge once, source-sized frame display, frame keys, precise export, and part switching. Clipboard call is mocked in the UI smoke; screenshot save produces a real file.
+- Separate native Windows clipboard helper test actually publishes a 1920×1080 bitmap and reads it with Windows Forms: dimensions and RGB pixel match exactly. Prior clipboard contents are captured in memory and restored afterwards.
+- At 1040×740, inner height/body scroll height 701/701; cut-panel client/scroll height 535/535. These are owned DOM/layout checks, not screenshot-based native visual verification.

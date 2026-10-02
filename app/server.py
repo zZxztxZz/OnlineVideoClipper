@@ -235,6 +235,10 @@ class Handler(BaseHTTPRequestHandler):
                 elif op=='frames': result=e.scenes.pictures(data.get('id'),data.get('start_index'),data.get('end_index'))
                 elif op=='frame': result=e.scenes.frame(data.get('id'),data.get('index'))
                 elif op=='snapshot': result=e.scenes.snapshot(data.get('id'),data.get('index'),data.get('path'))
+                elif op=='copy-frame':
+                    if self.server.desktop is None: raise ValueError('复制图片请使用桌面版。')
+                    image=e.scenes.full_frame(data.get('id'),data.get('index'))
+                    result=self.server.desktop.copy_frame(image)
                 else: raise ValueError('接口不存在')
             elif path in ('/api/connect/start', '/api/connect/finish', '/api/choose-cookie','/api/choose-save-file'):
                 desktop = self.server.desktop

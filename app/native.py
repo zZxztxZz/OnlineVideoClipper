@@ -47,6 +47,57 @@ class NativeBridge:
     def play(self, file):
         return self.request('play',file)
 
+    def copy_frame(self, file):
+        return self.request('copy-frame',file)
+
+
+def copy_image(path):
+    """Publish an original-size RGB bitmap to the Windows clipboard."""
+    import io
+    import time
+    from PIL import Image
+    with Image.open(path) as source:
+        image=source.convert('RGB')
+        width,height=image.size
+        buffer=io.BytesIO();image.save(buffer,format='BMP')
+        dib=buffer.getvalue()[14:]
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.GlobalAlloc.argtypes=[wintypes.UINT,ctypes.c_size_t];kernel.GlobalAlloc.restype=wintypes.HGLOBAL
+    kernel.GlobalLock.argtypes=[wintypes.HGLOBAL];kernel.GlobalLock.restype=ctypes.c_void_p
+    kernel.GlobalUnlock.argtypes=[wintypes.HGLOBAL]
+    kernel.GlobalFree.argtypes=[wintypes.HGLOBAL];kernel.GlobalFree.restype=wintypes.HGLOBAL
+    user.OpenClipboard.argtypes=[wintypes.HWND];user.OpenClipboard.restype=wintypes.BOOL
+    user.SetClipboardData.argtypes=[wintypes.UINT,wintypes.HANDLE];user.SetClipboardData.restype=wintypes.HANDLE
+    user.CreateWindowExW.argtypes=[wintypes.DWORD,wintypes.LPCWSTR,wintypes.LPCWSTR,wintypes.DWORD,
+        ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.HWND,wintypes.HMENU,wintypes.HINSTANCE,ctypes.c_void_p]
+    user.CreateWindowExW.restype=wintypes.HWND
+    user.DestroyWindow.argtypes=[wintypes.HWND]
+    window=user.CreateWindowExW(0,'STATIC','OnlineVideoClipper Clipboard',0,0,0,0,0,wintypes.HWND(-3),None,None,None)
+    if not window: raise OSError('无法初始化剪贴板')
+    block=kernel.GlobalAlloc(2,len(dib))
+    if not block:
+        user.DestroyWindow(window)
+        raise OSError('无法分配剪贴板图片内存')
+    opened=False
+    try:
+        pointer=kernel.GlobalLock(block)
+        if not pointer: raise OSError('无法读取图片内存')
+        try: ctypes.memmove(pointer,dib,len(dib))
+        finally: kernel.GlobalUnlock(block)
+        for _ in range(10):
+            if user.OpenClipboard(window): opened=True;break
+            time.sleep(.03)
+        if not opened: raise ValueError('剪贴板正被其他程序占用，请再试一次。')
+        if not user.EmptyClipboard() or not user.SetClipboardData(8,block):
+            raise OSError('Windows 未能复制图片到剪贴板')
+        block=None # Windows owns the bitmap after SetClipboardData succeeds.
+    finally:
+        if opened: user.CloseClipboard()
+        if block: kernel.GlobalFree(block)
+        user.DestroyWindow(window)
+    return dict(ok=True,width=width,height=height)
+
 def shell_reveal(path):
     path = Path(path).resolve()
     if not path.exists():
@@ -104,6 +155,8 @@ def run_helper(request_path):
                 raise ValueError('视频文件不存在')
             os.startfile(str(path), 'open', show_cmd=1)
             answer=dict(ok=True,message='已请求系统播放器打开视频')
+        elif data['operation']=='copy-frame':
+            answer=copy_image(data['path'])
         elif data['operation']=='probe':
             import tkinter as tk
             root=tk.Tk()
