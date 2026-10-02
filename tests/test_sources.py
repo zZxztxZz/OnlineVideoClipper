@@ -65,6 +65,19 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(request.get_header('Referer'),'https://www.bilibili.com/')
         self.assertIsNone(request.get_header('Host'));self.assertIsNone(request.get_header('Cookie'))
 
+    def test_preview_proxy_matches_extractor_system_explicit_and_domestic_direct(self):
+        from preview import open_media
+        entry=dict(format=dict(url='https://test.googlevideo.com/a.mp4'),settings=dict(proxy='',cookies=''))
+        with patch('preview.socket.getaddrinfo',return_value=[(0,0,0,'',('8.8.8.8',443))]),patch('preview.urllib.request.build_opener'),patch('preview.urllib.request.ProxyHandler') as proxy:
+            open_media(entry,'bytes=0-0',test_app.ROOT/'tools')
+            proxy.assert_called_once_with()
+            proxy.reset_mock();entry['settings']['_direct']=True
+            open_media(entry,'bytes=0-0',test_app.ROOT/'tools')
+            proxy.assert_called_once_with({})
+            proxy.reset_mock();entry['settings']['proxy']='http://127.0.0.1:10808'
+            open_media(entry,'bytes=0-0',test_app.ROOT/'tools')
+            proxy.assert_called_once_with({'https':'http://127.0.0.1:10808'})
+
 class PlatformPipelineTests(unittest.TestCase):
     setUp=test_app.CoreTests.setUp
     tearDown=test_app.CoreTests.tearDown

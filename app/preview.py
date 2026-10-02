@@ -30,7 +30,10 @@ def open_media(entry,range_header,tools):
     if s['proxy'] and not s['proxy'].startswith(('http://','https://')):
         raise ValueError('内置预览需要 HTTP 代理，下载仍可使用 SOCKS 代理')
     ca=Path(os.environ.get('SSL_CERT_FILE') or tools/'yt-dlp'/'_internal'/'certifi'/'cacert.pem')
-    handlers=[MediaRedirect(),urllib.request.ProxyHandler({'https':s['proxy']} if s['proxy'] else {}),
+    # Match yt-dlp: blank YouTube proxy inherits the system environment; domestic
+    # platforms explicitly opt into direct access unless configured otherwise.
+    proxy_handler=urllib.request.ProxyHandler({'https':s['proxy']}) if s['proxy'] else urllib.request.ProxyHandler({}) if s.get('_direct') else urllib.request.ProxyHandler()
+    handlers=[MediaRedirect(),proxy_handler,
               urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=str(ca) if ca.is_file() else None))]
     if s['cookies']:
         jar=http.cookiejar.MozillaCookieJar(s['cookies'])

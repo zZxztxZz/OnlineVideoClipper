@@ -97,3 +97,11 @@ Real Bilibili BV1bK411W797 p=1 manual preparation at 28–37 seconds produced a 
 - Owned WebView2 smoke confirms grouped clock, midpoint hover at 00:00:03.000 on a 6-second fixture, hiding on pointer leave, copy button invoking the native bridge once, source-sized frame display, frame keys, precise export, and part switching. Clipboard call is mocked in the UI smoke; screenshot save produces a real file.
 - Separate native Windows clipboard helper test actually publishes a 1920×1080 bitmap and reads it with Windows Forms: dimensions and RGB pixel match exactly. Prior clipboard contents are captured in memory and restored afterwards.
 - At 1040×740, inner height/body scroll height 701/701; cut-panel client/scroll height 535/535. These are owned DOM/layout checks, not screenshot-based native visual verification.
+
+
+## 0.13.1 YouTube system proxy consistency — 2026-10-02
+
+- 91 local tests passed, including preview proxy selection for inherited system proxy, explicit HTTP proxy and domestic direct access.
+- Reported ZE60HMgVACU: running 0.13.0 metadata succeeded in ~2.88 s with 144p–2160p formats; original preview video/audio returned HTTP 502. System HTTP proxy was present while preview explicitly disabled proxy inheritance. In-memory explicit system-proxy media request returned HTTP 206 and 65,536 bytes in ~0.88 s.
+- Fixed owned WebView2 test: 1080p preview ready in ~4.95 s; seek 5 s and play 5 s advanced to ~10.00 s, unchanged source and separate audio drift ~0.051 s. These timings are sample-specific. The optional frame step finished cache preparation but its image was still pending when the short test ended; this run verifies continuous playback, not completed frame-image rendering.
+- Portable rebuilt and launched. A redundant combined packaged API recheck was rejected by automatic approval review without a specific reason; it was skipped. Existing fixture and native tests are unaffected.
