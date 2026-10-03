@@ -172,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not 0<=begin<=end<size:
                     self.send_response(416);self.send_header('Content-Range',f'bytes */{size}');self.send_header('Content-Length','0');self.end_headers();return
             self.send_response(206 if header else 200)
-            self.send_header('Content-Type','audio/mp4' if entry['format'].get('vcodec')=='none' else 'video/mp4')
+            self.send_header('Content-Type',('audio/webm' if entry['format'].get('ext')=='webm' else 'audio/mp4') if entry['format'].get('vcodec')=='none' else 'video/mp4')
             self.send_header('Accept-Ranges','bytes');self.send_header('Content-Length',str(end-begin+1))
             if header:self.send_header('Content-Range',f'bytes {begin}-{end}/{size}')
             self.send_header('Cache-Control','private, no-store');self.end_headers();started=True
@@ -211,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith('/api/player/'):
                 if e.updating: raise ValueError('正在更新，请稍后加载素材。')
                 op=path.rsplit('/',1)[-1]
-                if op=='stream': result=e.stream_preview(data.get('url'),data.get('quality'))
+                if op=='stream': result=e.stream_preview(data.get('url'),data.get('quality'),data.get('audio_track',''))
                 elif op=='flow':
                     import time
                     items=data.get('items',[])

@@ -42,6 +42,16 @@ class StreamingTests(unittest.TestCase):
         self.assertFalse(list(self.e.byte_cache.root.glob('*.tmp')))
         self.assertFalse(list(self.e.byte_cache.root.glob('*.bin')))
 
+    def test_exact_extractor_size_skips_probe_but_validates_range(self):
+        _,entry=self.entry();raw=b'frame bytes';entry['format']['filesize']=len(raw)
+        with patch('preview.open_media',side_effect=self.upstream(raw)) as opened:
+            self.assertEqual(self.e.byte_cache.block(entry,0),raw)
+            self.assertEqual(opened.call_count,1)
+            self.assertEqual(opened.call_args.args[1],f'bytes=0-{len(raw)-1}')
+        _,entry=self.entry();entry['format']=dict(entry['format'],url='https://cdn.bilivideo.com/other.mp4',filesize=50)
+        with patch('preview.open_media',side_effect=self.upstream(raw)),self.assertRaises(ValueError):
+            self.e.byte_cache.block(entry,0)
+
     def test_bad_range_response_is_rejected(self):
         _,entry=self.entry();data=io.BytesIO(b'wrong');data.status=200;data.headers={}
         with patch('preview.open_media',return_value=data),self.assertRaises(ValueError):self.e.byte_cache.describe(entry)

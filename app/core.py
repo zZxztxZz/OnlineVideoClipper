@@ -16,6 +16,7 @@ import urllib.parse
 import uuid
 from sources import parse_source, resolve_source, platform_settings, NAMES
 from parts import fetch_parts
+from audio_tracks import audio_tracks, audio_rank, audio_selector, choose_audio, track_id, format_track
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 ACTIVE = ('downloading', 'processing')
@@ -254,6 +255,7 @@ class Engine:
                         qualities=[dict(height=h, fps=fps[h]) for h in heights],
                         chapters=[dict(title=x.get('title',''), start=x.get('start_time',0), end=x.get('end_time',0)) for x in info.get('chapters') or []],
                         elapsed_ms=round((time.perf_counter()-started)*1000),cache_hit=False)
+            data['audio_tracks']=audio_tracks(info) if source['platform']=='youtube' else []
             data['preview']=self.register_preview(info,s)
             data['parts'],data['parts_error']=fetch_parts(source,s) if source['platform']=='bilibili' else ([], '')
             with self.lock:
@@ -271,8 +273,9 @@ class Engine:
         cookie_stamp = Path(s['cookies']).stat().st_mtime_ns if s['cookies'] and Path(s['cookies']).is_file() else 0
         return (url,s['proxy'],s['cookies'],cookie_stamp)
 
-    def register_preview(self, info, s,quality='720'):
-        formats=[dict(f,http_headers={**info.get('http_headers',{}),**f.get('http_headers',{})}) for f in info.get('formats',[]) if f.get('url') and f.get('ext') in ('mp4','m4a') and not f.get('fragments') and f.get('protocol') in (None,'http','https')]
+    def register_preview(self, info, s,quality='720',audio_track=''):
+        audio_track=track_id(audio_track)
+        formats=[dict(f,http_headers={**info.get('http_headers',{}),**f.get('http_headers',{})}) for f in info.get('formats',[]) if f.get('url') and f.get('ext') in ('mp4','m4a','webm') and not f.get('fragments') and f.get('protocol') in (None,'http','https')]
         videos=[f for f in formats if (f.get('vcodec') or '').startswith(('avc','h264'))]
         if not videos: return None
         # Preview prefers a moderate AVC stream; download quality is independent.
@@ -280,18 +283,20 @@ class Engine:
         below=[f for f in videos if 0<(f.get('height') or 0)<=bound]
         chosen=max(below,key=lambda f:(f.get('height') or 0,f.get('fps') or 0,f.get('tbr') or 0)) if below else min(videos,key=lambda f:f.get('height') or 99999)
         audio=None
-        if chosen.get('acodec')=='none':
-            audios=[f for f in formats if f.get('vcodec')=='none' and (f.get('acodec') or '').startswith(('mp4a','aac'))]
+        if audio_track or chosen.get('acodec')=='none':
+            audios=[f for f in formats if f.get('vcodec')=='none' and (f.get('acodec') or '').startswith(('mp4a','aac','opus'))]
             if not audios: return None
-            audio=max(audios,key=lambda f:f.get('abr') or f.get('tbr') or 0)
+            audio=choose_audio(audios,audio_track)
         now=time.time()
         with self.lock:
             self.preview_sources={k:v for k,v in self.preview_sources.items() if now-v['created']<7200}
             if len(self.preview_sources)>100: self.preview_sources.clear()
             ids=[]
             for fmt in [chosen]+([audio] if audio else []):
-                key=uuid.uuid4().hex
-                self.preview_sources[key]=dict(format=fmt,settings=dict(s),created=now)
+                key=next((k for k,v in self.preview_sources.items() if v['format']['url']==fmt['url'] and self.cache_key(fmt['url'],v['settings'])==self.cache_key(fmt['url'],s)),None)
+                if not key:
+                    key=uuid.uuid4().hex
+                    self.preview_sources[key]=dict(format=fmt,settings=dict(s),created=now)
                 ids.append(key)
         return dict(video=ids[0],audio=ids[1] if audio else None)
 
@@ -302,18 +307,18 @@ class Engine:
                 raise ValueError('预览地址已过期，请重新解析')
             return entry
 
-    def stream_preview(self,url,quality):
+    def stream_preview(self,url,quality,audio_track=''):
         source=parse_source(url);s=platform_settings(self.settings(),source['platform'])
         quality=str(quality)
         if quality!='best' and not (quality.isdigit() and 1<=int(quality)<=4320):raise ValueError('预览清晰度无效')
         info=self.cached_download_info(source['url'],s)
         if not info:
             self.metadata(source['url'],force=True);info=self.cached_download_info(source['url'],s)
-        result=self.register_preview(info,s,quality) if info else None
+        result=self.register_preview(info,s,quality,audio_track) if info else None
         if not result:raise ValueError('当前源没有可直接播放的 AVC 媒体，请选择其他清晰度或重新解析。')
         return result
 
-    def cached_preview_info(self,info,quality=None):
+    def cached_preview_info(self,info,quality=None,audio_track=''):
         if not self.preview_origin:return info
         data=dict(info);data['formats']=[];data['http_headers']={}
         with self.lock:sources=list(self.preview_sources.items())
@@ -333,9 +338,9 @@ class Engine:
             chosen=max(local,key=lambda f:(f.get('fps') or 0,f.get('tbr') or 0))
             if chosen.get('acodec')!='none':data['formats']=[chosen]
             else:
-                audios=[f for f in data['formats'] if f.get('vcodec')=='none' and f['url'].startswith(self.preview_origin)]
+                audios=[f for f in data['formats'] if f.get('vcodec')=='none' and f['url'].startswith(self.preview_origin) and (not audio_track or format_track(f)==audio_track)]
                 if not audios:return info
-                data['formats']=[chosen,max(audios,key=lambda f:f.get('abr') or f.get('tbr') or 0)]
+                data['formats']=[chosen,max(audios,key=audio_rank)]
         return data
 
     def cached_download_info(self, url, s,max_age=300):
@@ -381,16 +386,18 @@ class Engine:
             raise ValueError('切割或输出模式无效')
         payloads = []
         for clip in clips:
+            audio_track=track_id(clip.get('audio_track',data.get('audio_track','')))
+            if audio_track and source['platform']!='youtube':raise ValueError('此平台暂不支持指定音轨。')
             shot={}
             if clip.get('player_segments'):
                 if full or quality=='audio': raise ValueError('逐帧选区需要视频格式')
-                _,a,b=self.scenes.validate_segments(clip['player_segments'],url,quality)
+                _,a,b=self.scenes.validate_segments(clip['player_segments'],url,quality,audio_track)
                 clip=dict(clip,start=a,end=b)
                 shot=dict(player_segments=clip['player_segments'])
             elif clip.get('shot_cache'):
                 if full or quality=='audio': raise ValueError('镜头选区目前用于视频片段导出。')
                 record,a,b=self.scenes.selection(clip['shot_cache'],clip.get('shot_start_frame'),clip.get('shot_end_frame'))
-                if record['url']!=url or record['quality']!=quality: raise ValueError('分析用清晰度或视频已改变，请保持原清晰度或重新识别镜头。')
+                if record['url']!=url or record['quality']!=quality or record.get('audio_track','')!=audio_track: raise ValueError('分析用清晰度或视频已改变，请保持原清晰度或重新识别镜头。')
                 clip=dict(clip,start=a,end=b)
                 shot={k:clip[k] for k in ('shot_cache','shot_start_frame','shot_end_frame')}
             start, end = seconds(clip.get('start')), seconds(clip.get('end'))
@@ -408,13 +415,13 @@ class Engine:
             payloads.append(dict(url=url, video_id=vid, platform=source['platform'], part=source['part'], title=str(data.get('title', vid))[:250],
                                  name=str(clip.get('name') or '片段')[:100], start=start, end=end,
                                  quality=quality, mode=mode, preset=preset, output_dir=chosen_dir,
-                                 full=full, filename=filename,**shot))
+                                 full=full, filename=filename,audio_track=audio_track,**shot))
             if shot: payloads[-1]['mode']='precise'
         added, duplicates = [], 0
         with self.lock, self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             for p in payloads:
-                identity={k:p[k] for k in ('url','start','end','quality','mode','preset','output_dir','full','filename')}
+                identity={k:p[k] for k in ('url','start','end','quality','mode','preset','output_dir','full','filename','audio_track')}
                 if p.get('shot_cache'): identity.update({k:p[k] for k in ('shot_cache','shot_start_frame','shot_end_frame')})
                 if p.get('player_segments'): identity['player_segments']=p['player_segments']
                 fp = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -468,7 +475,7 @@ class Engine:
                 payload=json.loads(row['payload'])
                 target=output_target(path,payload['quality'],payload['preset'])
                 payload.update(output_dir=str(target.parent),filename=target.name)
-                fingerprint=hashlib.sha256(json.dumps({k:payload.get(k,False if k=='full' else '') for k in ('url','start','end','quality','mode','preset','output_dir','full','filename','shot_cache','shot_start_frame','shot_end_frame','player_segments')},sort_keys=True).encode()).hexdigest()
+                fingerprint=hashlib.sha256(json.dumps({k:payload.get(k,False if k=='full' else '') for k in ('url','start','end','quality','mode','preset','output_dir','full','filename','shot_cache','shot_start_frame','shot_end_frame','player_segments','audio_track')},sort_keys=True).encode()).hexdigest()
                 self.patch(job_id,payload=json.dumps(payload,ensure_ascii=False),fingerprint=fingerprint,message='保存位置已更改，可重试或继续下载')
             elif action in ('up','down','first'):
                 if row['state'] not in ('queued','retrying','paused'):
@@ -565,9 +572,9 @@ class Engine:
         if p.get('platform')=='douyin' and q!='audio':
             bound += '[format_id!*=download][format_note!*=watermark]'
         if q == 'audio':
-            cmd += ['-f', 'bestaudio[ext=m4a]/bestaudio/best', '-x', '--audio-format', 'm4a']
+            cmd += ['-f', audio_selector(p.get('audio_track',''),m4a=True)+('/best' if not p.get('audio_track') else ''), '-x', '--audio-format', 'm4a']
         else:
-            cmd += ['-f', f'bestvideo{bound}+bestaudio/best{bound}', '-S', 'res,vcodec:h264,acodec:aac', '--merge-output-format', 'mkv']
+            cmd += ['-f', f'bestvideo{bound}+{audio_selector(p.get("audio_track",""))}'+(f'/best{bound}' if not p.get('audio_track') else ''), '-S', 'res,vcodec:h264,acodec:aac', '--merge-output-format', 'mkv']
         ffargs = '-progress pipe:1 -nostats'
         ca = Path(os.environ.get('SSL_CERT_FILE') or self.tools/'yt-dlp'/'_internal'/'certifi'/'cacert.pem')
         if not ca.is_file():
@@ -750,7 +757,7 @@ class Engine:
                     number+=1
                 shutil.move(str(output), str(final))
                 sidecar = dict(source=payload['url'], title=payload['title'], start=payload['start'], end=payload['end'],
-                               quality=payload['quality'], mode=payload['mode'], actual_duration=duration)
+                               quality=payload['quality'], mode=payload['mode'], audio_track=payload.get('audio_track',''),actual_duration=duration)
                 try:
                     final.with_suffix(final.suffix + '.source.json').write_text(json.dumps(sidecar, ensure_ascii=False, indent=2), encoding='utf-8')
                 except OSError:

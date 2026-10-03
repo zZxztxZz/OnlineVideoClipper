@@ -61,7 +61,7 @@ class PlayerTests(unittest.TestCase):
             (directory/'analysis.json').write_text(json.dumps(record),encoding='utf-8')
             self.e.player_cache.entries[key]=dict(record=record,used=time.monotonic())
             keys.append(key)
-        self.e.player_cache.session=(URL,'90',6)
+        self.e.player_cache.session=(URL,'90',6,'')
         return keys
 
     def test_cross_window_export_no_missing_or_duplicate_frames(self):
@@ -88,7 +88,7 @@ class PlayerTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.e.scenes.validate_segments([dict(id=keys[0],start=True,end=30)],URL,'90')
 
     def test_promote_prefetch_and_cancel_old_position(self):
-        cache=self.e.player_cache;cache.session=(URL,'90',200)
+        cache=self.e.player_cache;cache.session=(URL,'90',200,'')
         task=dict(session=cache.session,begin=20,finish=44,prefetch=True,id='fake')
         cache.running=task
         with patch.object(self.e.scenes,'status',return_value=dict(message='working')),patch.object(self.e.scenes,'cancel') as cancel:

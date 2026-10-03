@@ -66,6 +66,12 @@ class ByteCache:
         key=self.identity(entry)
         with self.lock:
             if key in self.sizes:return self.sizes[key]
+        size=entry['format'].get('filesize')
+        if type(size) is int and 0<size<10*1024**4:
+            # Exact extractor length only; approximate bitrate estimates are unsafe.
+            # Every block still validates the upstream Content-Range below.
+            with self.lock:self.sizes[key]=size
+            return size
         with open_media(entry,'bytes=0-0',self.engine.tools) as upstream:
             match=re.fullmatch(r'bytes 0-0/(\d+)',upstream.headers.get('Content-Range',''))
             if upstream.status!=206 or not match:raise ValueError('当前源不支持按需读取，请重新解析。')

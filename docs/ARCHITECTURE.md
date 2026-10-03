@@ -21,3 +21,6 @@
 0.12 的普通播放器使用连续 AVC/AAC 原媒体流，单条 HTML video URL 覆盖整个视频，独立音轨同步；不再用窗口代理拼接普通播放。`preview.ByteCache` 验证域名、公网地址、TLS 和上游 Content-Range，以 1 MiB 块缓存、64 KiB 数据到达即转发，部分文件中断删除。同格式的精确帧准备通过会话内 localhost Reader URL 复用原字节；本地 HTTP 输入不添加 HTTPS 私有 TLS 参数，外网 HTTPS 输入继续校验。播放器 heartbeat 只调节浏览器请求，Reader 请求不受暂停节流影响。缓存身份包含来源、代理和 Cookie 文件时间戳。
 
 普通播放和暂停不启动 SceneManager。首次逐帧才以 manual / preview=false 准备源帧时间，跳过 scdet 和代理编码。旧镜头缓存仍可完成历史队列导出，但自动识别与吸附 API/界面不再开放。方向键捕获处理允许时间轴焦点，并合并连续按键请求。
+
+
+0.14 audio selection: audio_tracks.py groups language and description variants across bitrate formats, ranks original tracks before higher-bitrate dubs, validates track IDs, and generates language/role-constrained yt-dlp selectors. Track identity propagates through stream, player-cache session, scene record, job fingerprint, source-cache validation and sidecar. Preview registry reuses the video key when changing audio; native audio changes independently. Playback waits for both streams to be ready before starting them together. Exact extractor filesize skips the size-probe round trip, while each byte block still requires matching HTTP 206 Content-Range.

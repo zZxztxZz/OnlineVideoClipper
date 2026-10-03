@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from sources import parse_source, platform_settings
+from audio_tracks import track_id, audio_selector
 
 
 class SceneManager:
@@ -46,9 +47,10 @@ class SceneManager:
                 shutil.rmtree(p,ignore_errors=True)
                 total-=size
 
-    def start(self, url, center, quality, duration, radius=12, mode='scene', begin=None, finish=None, preview=True):
+    def start(self, url, center, quality, duration, radius=12, mode='scene', begin=None, finish=None, preview=True,audio_track=''):
         if self.stopped.is_set(): raise ValueError('程序正在退出')
         source=parse_source(url)
+        audio_track=track_id(audio_track)
         if source['short']: raise ValueError('请先解析视频，再识别镜头。')
         if quality=='audio' or quality!='best' and not (str(quality).isdigit() and 1<=int(quality)<=4320):
             raise ValueError('识别镜头需要视频清晰度，请先选择视频格式。')
@@ -64,7 +66,7 @@ class SceneManager:
             if finish-begin>600: raise ValueError('逐帧微调每次支持 10 分钟以内的选区，请先缩短选区。')
         if not self.slot.acquire(blocking=False): raise ValueError('正在识别镜头，请先等待完成或取消。')
         key=uuid.uuid4().hex
-        task=dict(id=key,url=source['url'],center=center,quality=str(quality),duration=duration,radius=radius,
+        task=dict(id=key,url=source['url'],center=center,quality=str(quality),duration=duration,radius=radius,audio_track=audio_track,
                   state='working',message='正在准备逐帧预览…' if mode=='manual' else '正在读取附近视频…',
                   mode=mode,begin=begin,finish=finish,preview=preview,cancel=threading.Event(),process=None)
         with self.lock: self.tasks[key]=task
@@ -105,12 +107,12 @@ class SceneManager:
         bound='' if task['quality']=='best' else '[height<='+task['quality']+']'
         if parse_source(task['url'])['platform']=='douyin': bound+='[format_id!*=download][format_note!*=watermark]'
         cmd=self.engine.base_command(s)+['--newline','--no-quiet','--download-sections',f'*{start}-{end}',
-            '-f',f'bestvideo{bound}+bestaudio/best{bound}','-S','res,vcodec:h264,acodec:aac',
+            '-f',f'bestvideo{bound}+{audio_selector(task.get("audio_track",""))}'+(f'/best{bound}' if not task.get('audio_track') else ''),'-S','res,vcodec:h264,acodec:aac',
             '--paths',str(directory),'--output','source.%(ext)s','--force-overwrites','--print','after_move:FILE:%(filepath)s',
             '--downloader-args','ffmpeg_o:-copyts -start_at_zero -avoid_negative_ts disabled -f matroska',
             '--socket-timeout','20','--retries','1','--fragment-retries','1']
         cached=self.engine.cached_download_info(task['url'],s,max_age=7200 if self.engine.preview_origin else 300)
-        if cached: cached=self.engine.cached_preview_info(cached,task['quality'])
+        if cached: cached=self.engine.cached_preview_info(cached,task['quality'],task.get('audio_track',''))
         local=bool(cached and self.engine.preview_origin and all(f.get('url','').startswith(self.engine.preview_origin) for f in cached.get('formats',[])))
         ca=Path(os.environ.get('SSL_CERT_FILE') or self.engine.tools/'yt-dlp'/'_internal'/'certifi'/'cacert.pem')
         if ca.is_file() and not local:
@@ -147,7 +149,7 @@ class SceneManager:
         shots=[dict(start_index=a,end_index=b,left_found=a>0 or left_known,right_found=b<len(times) or right_known) for a,b in zip(edges,edges[1:])]
         selected=next((i for i,s in enumerate(shots) if times[s['start_index']]<=task['center']<(times[s['end_index']] if s['end_index']<len(times) else last_end)),len(shots)-1)
         stream=probe.get('streams',[{}])[0]
-        return dict(url=task['url'],quality=task['quality'],duration=task['duration'],center=task['center'],
+        return dict(url=task['url'],quality=task['quality'],audio_track=task.get('audio_track',''),duration=task['duration'],center=task['center'],
             times=times,last_end=last_end,shots=shots,selected_shot=selected,
             width=stream.get('width'),height=stream.get('height'),fps=round(1/step,3),radius=task['radius'],
             cuts=cuts,cuts_ready=task.get('mode')!='manual',mode=task.get('mode','scene'))
@@ -361,7 +363,7 @@ class SceneManager:
 
     def export_command(self,payload,target):
         record,a,b=self.selection(payload['shot_cache'],payload['shot_start_frame'],payload['shot_end_frame'])
-        if record['url']!=payload['url'] or record['quality']!=payload['quality']: raise ValueError('视频或清晰度已改变，请重新识别镜头。')
+        if record['url']!=payload['url'] or record['quality']!=payload['quality'] or record.get('audio_track','')!=payload.get('audio_track',''): raise ValueError('视频或清晰度已改变，请重新识别镜头。')
         return [str(self.engine.tools/'ffmpeg.exe'),'-hide_banner','-loglevel','error','-y','-copyts',
             '-i',str(self.root/payload['shot_cache']/'source.mkv'),'-map','0:v:0','-map','0:a:0?',
             '-vf',f'trim=start_frame={payload["shot_start_frame"]}:end_frame={payload["shot_end_frame"]},setpts=PTS-STARTPTS',
@@ -369,20 +371,20 @@ class SceneManager:
             '-c:a','aac','-b:a','192k','-fps_mode','passthrough','-enc_time_base','filter',
             '-progress','pipe:1','-nostats','-f','matroska',str(target)]
 
-    def validate_segments(self,segments,url,quality):
+    def validate_segments(self,segments,url,quality,audio_track=''):
         if not isinstance(segments,list) or not 1<=len(segments)<=64: raise ValueError('素材缓冲引用无效')
         checked=[];previous=None
         for item in segments:
             if not isinstance(item,dict): raise ValueError('素材缓冲引用无效')
             record,a,b=self.selection(item.get('id'),item.get('start'),item.get('end'))
-            if record['url']!=url or record['quality']!=quality: raise ValueError('素材视频或清晰度不匹配')
+            if record['url']!=url or record['quality']!=quality or record.get('audio_track','')!=audio_track: raise ValueError('素材视频或清晰度不匹配')
             if previous is not None and abs(a-previous)>.002: raise ValueError('选区缓冲不连续，请重新加载缺失的位置。')
             checked.append((record,a,b));previous=b
         return checked,checked[0][1],checked[-1][2]
 
     def segments_command(self,payload,target):
         segments=payload['player_segments']
-        records,_,_=self.validate_segments(segments,payload['url'],payload['quality'])
+        records,_,_=self.validate_segments(segments,payload['url'],payload['quality'],payload.get('audio_track',''))
         command=[str(self.engine.tools/'ffmpeg.exe'),'-hide_banner','-loglevel','error','-y','-copyts']
         filters=[];labels=[]
         for n,(item,(record,a,b)) in enumerate(zip(segments,records)):

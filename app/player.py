@@ -5,6 +5,7 @@ import math
 import threading
 import time
 from sources import parse_source
+from audio_tracks import track_id
 
 
 class PlayerCache:
@@ -48,7 +49,8 @@ class PlayerCache:
             raise ValueError('请先解析视频并选择视频清晰度。')
         if not all(math.isfinite(v) for v in (duration,position)) or not 0<=position<duration<=604800:
             raise ValueError('播放位置无效')
-        session=(source['url'],quality,duration)
+        audio_track=track_id(data.get('audio_track',''))
+        session=(source['url'],quality,duration,audio_track)
         prefetch=data.get('prefetch') is True
         with self.lock:
             if self.stopped.is_set(): raise ValueError('程序正在退出')
@@ -58,6 +60,7 @@ class PlayerCache:
                 self.restore(session)
             protected=data.get('keep',[])
             if not isinstance(protected,list) or len(protected)>64: raise ValueError('缓冲引用无效')
+            self.external_pins={key for key in protected if isinstance(key,str) and len(key)==32 and all(c in '0123456789abcdef' for c in key)}
             self.keep={key for key in protected if key in self.entries}
             hit=self.find(position)
             if prefetch:
@@ -79,7 +82,7 @@ class PlayerCache:
             if not self.trim(reserve=end-begin+6,budget=budget):
                 if not prefetch:self.error='已保留的选区占满缓冲，请下载或清空片段后重试。'
                 return self.status()
-            self.pending=dict(url=session[0],quality=quality,duration=duration,center=position,
+            self.pending=dict(url=session[0],quality=quality,duration=duration,audio_track=audio_track,center=position,
                               begin=begin,finish=end,mode='manual',preview=data.get('frames_only') is not True,prefetch=prefetch,serial=self.serial,session=session,budget=budget)
             self.pins();self.wake.set()
             return self.status()
@@ -90,12 +93,13 @@ class PlayerCache:
             if self.running.get('id'): self.scenes.cancel(self.running['id'])
 
     def restore(self,session):
+        if len(session)==3:session=(*session,'')
         for path in self.scenes.root.glob('*/analysis.json'):
             try:
                 if time.time()-path.stat().st_mtime>86400:continue
                 record=self.scenes.record(path.parent.name)
                 if record.get('preview_version') not in (1,2):continue
-                if (record['url'],record['quality'],record['duration'])!=session:continue
+                if (record['url'],record['quality'],record['duration'],record.get('audio_track',''))!=session:continue
                 if record['last_end']-record['times'][0]>self.MAX_SECONDS:continue
                 if not (path.parent/'source.mkv').is_file():continue
                 if record['preview_version']==1 and not (path.parent/'preview.mp4').is_file():continue
@@ -109,7 +113,7 @@ class PlayerCache:
         return max(candidates)[1] if candidates else None
 
     def pins(self):
-        self.scenes.player_pins=set(self.entries)
+        self.scenes.player_pins=set(self.entries)|getattr(self,'external_pins',set())
 
     def job_pins(self):
         with self.engine.connect() as c:
@@ -166,7 +170,7 @@ class PlayerCache:
                 if task.get('cancelled') or self.stopped.is_set():continue
                 with self.lock:
                     if task.get('cancelled'):continue
-                    result=self.scenes.start(**{k:v for k,v in task.items() if k in ('url','quality','duration','center','begin','finish','mode','preview')})
+                    result=self.scenes.start(**{k:v for k,v in task.items() if k in ('url','quality','duration','center','begin','finish','mode','preview','audio_track')})
                     task['id']=result['id']
                 while not self.stopped.wait(.1):
                     state=self.scenes.status(task['id'])
@@ -196,7 +200,7 @@ class PlayerCache:
         if not all(math.isfinite(v) for v in (begin,end)) or not 0<=begin<end or end-begin>600:
             raise ValueError('逐帧素材选区支持 10 分钟以内，请缩短选区。')
         with self.lock:
-            if not self.session or data.get('url')!=self.session[0] or str(data.get('quality'))!=self.session[1]:
+            if not self.session or data.get('url')!=self.session[0] or str(data.get('quality'))!=self.session[1] or track_id(data.get('audio_track',''))!=(self.session[3] if len(self.session)>3 else ''):
                 raise ValueError('视频或清晰度已改变，请重新加载。')
             cursor=begin;segments=[]
             while cursor<end-.0005:
