@@ -114,3 +114,9 @@ Real Bilibili BV1bK411W797 p=1 manual preparation at 28–37 seconds produced a 
 - Reported S9STizATKjE: 97 s video with 13 language tracks; en-US is original. Initial diagnostics metadata ~4.86 s, video first 64 KiB ~2.62 s, original audio first 64 KiB ~1.75 s. Original player also performed a separate one-byte size request per source and could select a higher-bitrate dub.
 - Fixed owned WebView2 live test: final run metadata ~3.78 s, preview ~1.74 s; English default switches to Japanese without changing video src. Paused position 10.000587 stays 10.000587 after switching, then two seconds of playback reaches 12.001102; audio drift ~0.053 s. Network timings vary, and do not imply a guaranteed reduction. Audio load/switch can still take several seconds on this connection.
 - At 1040×740: body scroll/inner height 701/701 and cut scroll/client height 535/535, with multi-track menu visible. Existing owned fixture checks for clipboard, frame keys, saved image, exact export and Bilibili parts still pass. Verification uses DOM/runtime layout, not native screenshot appearance QA.
+
+
+## 0.14.1 media-only output — 2026-10-03
+
+- 100 local tests pass. Existing output validation and real selected-audio export tests now assert that no `.source.json` is generated alongside the finished media.
+- Source, selection, quality and audio-track values remain in the local jobs database. Existing user sidecar files are left untouched.

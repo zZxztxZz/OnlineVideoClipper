@@ -62,6 +62,5 @@ class AudioExportTests(unittest.TestCase):
             samples=struct.unpack('<'+'h'*(len(raw)//2),raw)
             energy=lambda hz:abs(sum(value*complex(math.cos(2*math.pi*hz*i/8000),math.sin(2*math.pi*hz*i/8000)) for i,value in enumerate(samples)))
             self.assertGreater(energy(880),energy(440)*10)
-            sidecar=json.loads(Path(row['output']+'.source.json').read_text(encoding='utf-8'))
-            self.assertEqual(sidecar['audio_track'],'ja')
+            self.assertFalse(Path(row['output']+'.source.json').exists())
         finally:server.shutdown();server.server_close()

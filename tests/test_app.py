@@ -345,7 +345,7 @@ class RealMediaTests(unittest.TestCase):
         self.assertEqual(row['state'],'complete',row['detail'])
         final=Path(row['output'])
         self.assertTrue(final.is_file())
-        self.assertTrue(final.with_suffix(final.suffix+'.source.json').is_file())
+        self.assertFalse(final.with_suffix(final.suffix+'.source.json').exists())
         probe=json.loads(subprocess.check_output([str(ROOT/'tools'/'ffprobe.exe'),'-v','error','-show_entries','format=duration:stream=codec_name,codec_type','-of','json',str(final)]))
         duration=float(probe['format']['duration'])
         if full: self.assertAlmostEqual(duration,12,delta=.15)

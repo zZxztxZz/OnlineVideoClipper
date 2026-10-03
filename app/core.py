@@ -756,12 +756,6 @@ class Engine:
                     final=base.with_name(base.stem+f' ({number})'+base.suffix)
                     number+=1
                 shutil.move(str(output), str(final))
-                sidecar = dict(source=payload['url'], title=payload['title'], start=payload['start'], end=payload['end'],
-                               quality=payload['quality'], mode=payload['mode'], audio_track=payload.get('audio_track',''),actual_duration=duration)
-                try:
-                    final.with_suffix(final.suffix + '.source.json').write_text(json.dumps(sidecar, ensure_ascii=False, indent=2), encoding='utf-8')
-                except OSError:
-                    pass
                 self.patch(job_id, state='complete', progress=100, output=str(final), message='下载完成', detail='',failure_kind='',metrics=json.dumps(dict(downloaded_bytes=final.stat().st_size)))
             work = self.data / 'jobs' / job_id
             if work.is_dir() and work.resolve().is_relative_to((self.data/'jobs').resolve()):
